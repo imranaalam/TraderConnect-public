@@ -84,7 +84,12 @@ export class MemStorage implements IStorage {
 
   async createUser(insertUser: InsertUser): Promise<User> {
     const id = this.userIdCounter++;
-    const user: User = { ...insertUser, id };
+    const user: User = { 
+      ...insertUser, 
+      id,
+      firstName: insertUser.firstName || null,
+      lastName: insertUser.lastName || null
+    };
     this.users.set(id, user);
     return user;
   }
@@ -106,7 +111,11 @@ export class MemStorage implements IStorage {
 
   async createExchange(insertExchange: InsertExchange): Promise<Exchange> {
     const id = this.exchangeIdCounter++;
-    const exchange: Exchange = { ...insertExchange, id };
+    const exchange: Exchange = { 
+      ...insertExchange, 
+      id,
+      requiresBroker: insertExchange.requiresBroker || false
+    };
     this.exchanges.set(id, exchange);
     return exchange;
   }
@@ -128,7 +137,12 @@ export class MemStorage implements IStorage {
 
   async createBroker(insertBroker: InsertBroker): Promise<Broker> {
     const id = this.brokerIdCounter++;
-    const broker: Broker = { ...insertBroker, id };
+    const broker: Broker = { 
+      ...insertBroker, 
+      id,
+      exchangeId: insertBroker.exchangeId || null,
+      authMethods: insertBroker.authMethods || []
+    };
     this.brokers.set(id, broker);
     return broker;
   }
@@ -146,7 +160,14 @@ export class MemStorage implements IStorage {
 
   async createConnection(insertConnection: InsertConnection): Promise<Connection> {
     const id = this.connectionIdCounter++;
-    const connection: Connection = { ...insertConnection, id };
+    const connection: Connection = { 
+      ...insertConnection, 
+      id,
+      brokerId: insertConnection.brokerId || null,
+      accountId: insertConnection.accountId || null,
+      isActive: insertConnection.isActive !== undefined ? insertConnection.isActive : true,
+      lastConnected: insertConnection.lastConnected || null
+    };
     this.connections.set(id, connection);
     return connection;
   }
@@ -175,79 +196,164 @@ export class MemStorage implements IStorage {
       lastName: 'User'
     });
     
-    // Sample Exchanges
-    const cryptoExchanges = [
-      { name: 'Binance', type: 'spot', marketType: 'crypto', requiresBroker: false },
-      { name: 'Coinbase', type: 'spot', marketType: 'crypto', requiresBroker: false },
-      { name: 'Kraken', type: 'spot', marketType: 'crypto', requiresBroker: false },
-      { name: 'Binance Futures', type: 'futures', marketType: 'crypto', requiresBroker: false },
-    ];
-    
-    const equityExchanges = [
-      { name: 'NYSE', type: 'spot', marketType: 'equity', requiresBroker: true },
-      { name: 'NASDAQ', type: 'spot', marketType: 'equity', requiresBroker: true },
-      { name: 'LSE', type: 'spot', marketType: 'equity', requiresBroker: true },
-      { name: 'PSX', type: 'spot', marketType: 'equity', requiresBroker: true }, // Pakistan Stock Exchange
-      { name: 'NSE', type: 'spot', marketType: 'equity', requiresBroker: true }, // National Stock Exchange of India
-    ];
-    
-    const forexExchanges = [
-      { name: 'Forex.com', type: 'spot', marketType: 'forex', requiresBroker: false },
-      { name: 'OANDA', type: 'spot', marketType: 'forex', requiresBroker: false },
-    ];
-    
-    const commodityExchanges = [
-      { name: 'CME Group', type: 'futures', marketType: 'commodity', requiresBroker: true },
-      { name: 'ICE', type: 'futures', marketType: 'commodity', requiresBroker: true },
+    // Define market types and their respective exchanges
+    const marketTypes = [
+      {
+        type: 'crypto',
+        exchanges: [
+          { name: 'Binance', type: 'spot', requiresBroker: false },
+          { name: 'Coinbase', type: 'spot', requiresBroker: false },
+          { name: 'Kraken', type: 'spot', requiresBroker: false },
+          { name: 'Binance Futures', type: 'futures', requiresBroker: false },
+        ]
+      },
+      {
+        type: 'equity',
+        exchanges: [
+          { name: 'NYSE', type: 'spot', requiresBroker: true },
+          { name: 'NASDAQ', type: 'spot', requiresBroker: true },
+          { name: 'LSE', type: 'spot', requiresBroker: true },
+          { name: 'PSX', type: 'spot', requiresBroker: true }, // Pakistan Stock Exchange
+          { name: 'NSE', type: 'spot', requiresBroker: true }, // National Stock Exchange of India
+        ]
+      },
+      {
+        type: 'forex',
+        exchanges: [
+          { name: 'Forex.com', type: 'spot', requiresBroker: false },
+          { name: 'OANDA', type: 'spot', requiresBroker: false },
+        ]
+      },
+      {
+        type: 'commodity',
+        exchanges: [
+          { name: 'CME Group', type: 'futures', requiresBroker: true },
+          { name: 'ICE', type: 'futures', requiresBroker: true },
+        ]
+      },
+      {
+        type: 'metals',
+        exchanges: [
+          { name: 'COMEX', type: 'futures', requiresBroker: true },
+          { name: 'LME', type: 'spot', requiresBroker: true },
+        ]
+      }
     ];
 
-    // Create exchanges
-    [...cryptoExchanges, ...equityExchanges, ...forexExchanges, ...commodityExchanges].forEach(exchange => {
-      this.createExchange(exchange as InsertExchange);
+    // Create exchanges with their respective market types
+    const exchangeIdMap = new Map<string, number>();
+    
+    marketTypes.forEach(market => {
+      market.exchanges.forEach(exchange => {
+        const exchangeData = {
+          name: exchange.name,
+          type: exchange.type,
+          marketType: market.type,
+          requiresBroker: exchange.requiresBroker
+        };
+        
+        // Create the exchange and store its ID for broker mapping
+        this.createExchange(exchangeData as InsertExchange)
+          .then(createdExchange => {
+            exchangeIdMap.set(createdExchange.name, createdExchange.id);
+          });
+      });
     });
 
-    // Sample Brokers
-    const equityBrokers = [
-      // NYSE brokers (exchangeId: 1)
-      { name: 'Interactive Brokers', exchangeId: 1, authMethods: ['api', 'credentials'] },
-      { name: 'TD Ameritrade', exchangeId: 1, authMethods: ['api', 'credentials'] },
-      { name: 'Charles Schwab', exchangeId: 1, authMethods: ['credentials'] },
-      { name: 'Robinhood', exchangeId: 1, authMethods: ['api'] },
-      
-      // NASDAQ brokers (exchangeId: 2)
-      { name: 'Interactive Brokers', exchangeId: 2, authMethods: ['api', 'credentials'] },
-      { name: 'TD Ameritrade', exchangeId: 2, authMethods: ['api', 'credentials'] },
-      { name: 'Charles Schwab', exchangeId: 2, authMethods: ['credentials'] },
-      { name: 'Robinhood', exchangeId: 2, authMethods: ['api'] },
-      
-      // LSE brokers (exchangeId: 3)
-      { name: 'Interactive Brokers', exchangeId: 3, authMethods: ['api', 'credentials'] },
-      { name: 'Hargreaves Lansdown', exchangeId: 3, authMethods: ['credentials'] },
-      
-      // PSX brokers (exchangeId: 4)
-      { name: 'AKD', exchangeId: 4, authMethods: ['credentials'] },
-      { name: 'MKK', exchangeId: 4, authMethods: ['credentials'] },
-      
-      // NSE brokers (exchangeId: 5)
-      { name: 'Zerodha', exchangeId: 5, authMethods: ['api', 'credentials'] },
-      { name: 'ICICI Direct', exchangeId: 5, authMethods: ['credentials'] },
-      { name: 'Angel Broking', exchangeId: 5, authMethods: ['api', 'credentials'] },
-    ];
-    
-    const commodityBrokers = [
-      // CME Group (exchangeId: 8)
-      { name: 'Interactive Brokers', exchangeId: 8, authMethods: ['api', 'credentials'] },
-      { name: 'TD Ameritrade', exchangeId: 8, authMethods: ['api', 'credentials'] },
-      
-      // ICE (exchangeId: 9)
-      { name: 'Interactive Brokers', exchangeId: 9, authMethods: ['api', 'credentials'] },
-      { name: 'ADMIS', exchangeId: 9, authMethods: ['credentials'] },
-    ];
+    // Wait a bit to ensure exchanges are created before creating brokers
+    setTimeout(() => {
+      // Define broker mappings by exchange name
+      const brokerMappings = [
+        // US equity brokers
+        { 
+          exchangeName: 'NYSE', 
+          brokers: [
+            { name: 'Interactive Brokers', authMethods: ['api', 'credentials'] },
+            { name: 'TD Ameritrade', authMethods: ['api', 'credentials'] },
+            { name: 'Charles Schwab', authMethods: ['credentials'] },
+            { name: 'Robinhood', authMethods: ['api'] }
+          ]
+        },
+        { 
+          exchangeName: 'NASDAQ', 
+          brokers: [
+            { name: 'Interactive Brokers', authMethods: ['api', 'credentials'] },
+            { name: 'TD Ameritrade', authMethods: ['api', 'credentials'] },
+            { name: 'Fidelity', authMethods: ['credentials'] },
+            { name: 'E*TRADE', authMethods: ['api', 'credentials'] }
+          ]
+        },
+        // UK brokers
+        { 
+          exchangeName: 'LSE', 
+          brokers: [
+            { name: 'Interactive Brokers', authMethods: ['api', 'credentials'] },
+            { name: 'Hargreaves Lansdown', authMethods: ['credentials'] }
+          ]
+        },
+        // Pakistan brokers (PSX)
+        { 
+          exchangeName: 'PSX', 
+          brokers: [
+            { name: 'AKD', authMethods: ['credentials'] },
+            { name: 'MKK', authMethods: ['credentials'] }
+          ]
+        },
+        // India brokers (NSE)
+        { 
+          exchangeName: 'NSE', 
+          brokers: [
+            { name: 'Zerodha', authMethods: ['api', 'credentials'] },
+            { name: 'ICICI Direct', authMethods: ['credentials'] },
+            { name: 'Angel Broking', authMethods: ['api', 'credentials'] }
+          ]
+        },
+        // Commodity brokers
+        { 
+          exchangeName: 'CME Group', 
+          brokers: [
+            { name: 'Interactive Brokers', authMethods: ['api', 'credentials'] },
+            { name: 'TD Ameritrade', authMethods: ['api', 'credentials'] }
+          ]
+        },
+        { 
+          exchangeName: 'ICE', 
+          brokers: [
+            { name: 'Interactive Brokers', authMethods: ['api', 'credentials'] },
+            { name: 'ADMIS', authMethods: ['credentials'] }
+          ]
+        },
+        // Metals brokers
+        { 
+          exchangeName: 'COMEX', 
+          brokers: [
+            { name: 'Interactive Brokers', authMethods: ['api', 'credentials'] },
+            { name: 'TD Ameritrade', authMethods: ['api', 'credentials'] }
+          ]
+        },
+        { 
+          exchangeName: 'LME', 
+          brokers: [
+            { name: 'Interactive Brokers', authMethods: ['api', 'credentials'] },
+            { name: 'Sucden Financial', authMethods: ['credentials'] }
+          ]
+        }
+      ];
 
-    // Create brokers
-    [...equityBrokers, ...commodityBrokers].forEach(broker => {
-      this.createBroker(broker as InsertBroker);
-    });
+      // Create brokers based on exchange mappings
+      brokerMappings.forEach(mapping => {
+        const exchangeId = exchangeIdMap.get(mapping.exchangeName);
+        if (exchangeId) {
+          mapping.brokers.forEach(broker => {
+            this.createBroker({
+              name: broker.name,
+              exchangeId: exchangeId,
+              authMethods: broker.authMethods
+            } as InsertBroker);
+          });
+        }
+      });
+    }, 100);  // Small delay to ensure exchanges are created first
   }
 }
 
