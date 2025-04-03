@@ -7,36 +7,26 @@ import { z } from "zod";
 import { scrypt, createHash } from 'crypto';
 import { promisify } from 'util';
 import axios from 'axios';
+import { testConnection as testAKDAPI, getAllAccountDetails as getAKDDetails } from './brokers/akdApiClient';
 
 // Connection test implementation functions
 async function testAKDConnection(credentials: Record<string, string>): Promise<boolean> {
-  // Validate required credentials for AKD based on their API from Python code
+  // Validate required credentials for AKD
   if (!credentials.username || !credentials.password) {
     throw new Error('Missing required credentials for AKD: username and password are required');
   }
   
-  // Optional PIN code for extra authentication
-  const pincode = credentials.pin || '';
-  
   try {
-    // In a real implementation, this would use axios to make SOAP requests to:
-    // const WSDL_URL = "http://online.akdtrade.biz/TradeCastService/LoginServerService?wsdl";
-    
     console.log(`Attempting to connect to AKD using username: ${credentials.username}`);
     
-    // Simulate SOAP API call to TradAccounts endpoint
-    // This is based on the Python implementation in the provided file
-    const params = { userName: credentials.username };
+    // Use the imported testConnection function from the AKD API client
+    const connectionResult = await testAKDAPI(credentials.username, credentials.password);
     
-    // Simulate successful connection for "jawadfoq" (from the Python script)
-    // or "demo_akd" for ease of testing
-    if (credentials.username === 'jawadfoq' || credentials.username === 'demo_akd') {
-      // This would normally check password against the actual API
+    if (connectionResult) {
       return true;
     }
     
-    // In production, this would check specific error codes from the SOAP response
-    throw new Error('Invalid username for AKD. Please verify your credentials.');
+    throw new Error('Connection failed. Please verify your credentials.');
   } catch (error: any) {
     console.error('AKD connection test error:', error);
     throw new Error(`AKD API connection failed: ${error.message}`);
@@ -394,7 +384,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
   
-  // Mock implementation of AKD account details based on the Python code
+  // Implementation of AKD account details using the SOAP API client
   async function getAKDAccountDetails(credentials: Record<string, string>) {
     try {
       // Check if we have the minimum required credentials
@@ -402,55 +392,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         throw new Error('Missing required credentials for AKD');
       }
       
-      // If this is the demo account "jawadfoq" or our test account, return sample data
-      if (credentials.username === 'jawadfoq' || credentials.username === 'demo_akd') {
-        // Mock data based on the Python script sample output
-        return {
-          tradingAccounts: {
-            headers: ["Account", "Name", "Status", "Type", "Balance"],
-            data: [
-              ["COAF3906", "Jawad Foqan", "Active", "Cash", "PKR 587,210.45"],
-              ["COAF3907", "Jawad Foqan", "Active", "Margin", "PKR 123,456.78"]
-            ]
-          },
-          orderHistory: {
-            headers: ["Order ID", "Symbol", "Side", "Type", "Quantity", "Price", "Status", "Date"],
-            data: [
-              ["ORD001", "MARI", "Buy", "Limit", "100", "PKR 1,234.56", "Completed", "2025-03-01"],
-              ["ORD002", "ENGRO", "Sell", "Market", "50", "PKR 987.65", "Completed", "2025-03-02"],
-              ["ORD003", "LUCK", "Buy", "Limit", "75", "PKR 567.89", "Rejected", "2025-03-03"]
-            ]
-          },
-          accountStatement: {
-            headers: ["Date", "Description", "Debit", "Credit", "Balance"],
-            data: [
-              ["2025-03-01", "Deposit", "", "PKR 100,000.00", "PKR 100,000.00"],
-              ["2025-03-02", "Buy MARI x100", "PKR 123,456.00", "", "PKR -23,456.00"],
-              ["2025-03-03", "Sell ENGRO x50", "", "PKR 49,382.50", "PKR 25,926.50"],
-              ["2025-03-04", "Dividend MARI", "", "PKR 5,000.00", "PKR 30,926.50"]
-            ]
-          },
-          portfolioHoldings: {
-            headers: ["Symbol", "Quantity", "Avg Price", "Current Price", "Market Value", "Profit/Loss"],
-            data: [
-              ["MARI", "100", "PKR 1,234.56", "PKR 1,345.67", "PKR 134,567.00", "+PKR 11,111.00 (9.0%)"],
-              ["LUCK", "75", "PKR 567.89", "PKR 598.76", "PKR 44,907.00", "+PKR 2,315.25 (5.4%)"]
-            ]
-          },
-          marginDetails: {
-            headers: ["Particular", "Value"],
-            data: [
-              ["Available Margin", "PKR 587,210.45"],
-              ["Used Margin", "PKR 179,474.00"],
-              ["Margin Call Level", "70%"],
-              ["Current Margin Usage", "23.4%"]
-            ]
-          }
-        };
-      }
+      // Use our AKD API client to fetch real account details
+      const accountDetails = await getAKDDetails(credentials.username, credentials.password);
       
-      // For other users, return a placeholder indicating real API call would be made
-      throw new Error('Invalid username for AKD or real API connection required');
+      // Add any additional processing or mapping for the frontend if needed
+      return accountDetails;
     } catch (error: any) {
       console.error('AKD account details error:', error);
       throw new Error(`Failed to fetch AKD account details: ${error.message}`);
