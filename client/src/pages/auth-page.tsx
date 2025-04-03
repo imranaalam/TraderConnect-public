@@ -258,9 +258,11 @@ export default function AuthPage() {
                             <FormControl>
                               <Input 
                                 type="email" 
+                                id="email"
+                                name="email"
                                 placeholder="email@example.com"
-                                {...field}
                                 autoComplete="email"
+                                {...field}
                               />
                             </FormControl>
                             <FormMessage />
@@ -276,9 +278,11 @@ export default function AuthPage() {
                             <FormLabel>Username</FormLabel>
                             <FormControl>
                               <Input 
-                                placeholder="johndoe" 
-                                {...field} 
+                                placeholder="johndoe"
+                                id="username"
+                                name="username" 
                                 autoComplete="username"
+                                {...field} 
                               />
                             </FormControl>
                             <FormMessage />
@@ -295,9 +299,11 @@ export default function AuthPage() {
                             <FormControl>
                               <Input 
                                 type="password" 
+                                id="password"
+                                name="password"
                                 placeholder="••••••••" 
-                                {...field} 
                                 autoComplete="new-password"
+                                {...field} 
                               />
                             </FormControl>
                             <FormMessage />
@@ -314,9 +320,10 @@ export default function AuthPage() {
                             <FormControl>
                               <Input 
                                 type="password" 
+                                id="confirmPassword"
                                 placeholder="••••••••" 
-                                {...field} 
                                 autoComplete="new-password"
+                                {...field} 
                               />
                             </FormControl>
                             <FormMessage />
