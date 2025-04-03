@@ -72,7 +72,7 @@ export default function ExchangeConnectPage() {
 
   // Fetch brokers for the selected exchange
   const { data: brokers, isLoading: brokersLoading } = useQuery<Broker[]>({
-    queryKey: ["/api/brokers", selectedExchangeId],
+    queryKey: [`/api/brokers/${selectedExchangeId}`],
     enabled: !!selectedExchangeId,
   });
 
@@ -361,44 +361,10 @@ export default function ExchangeConnectPage() {
                       )}
                     />
 
-                    {/* Exchange Type */}
-                    <FormField
-                      control={form.control}
-                      name="exchangeType"
-                      render={({ field }) => (
-                        <FormItem className="space-y-3">
-                          <FormLabel>Exchange Type</FormLabel>
-                          <FormControl>
-                            <RadioGroup
-                              onValueChange={field.onChange}
-                              value={field.value}
-                              className="flex space-x-4"
-                            >
-                              <FormItem className="flex items-center space-x-2 space-y-0">
-                                <FormControl>
-                                  <RadioGroupItem value="spot" />
-                                </FormControl>
-                                <FormLabel className="font-normal cursor-pointer">
-                                  Spot
-                                </FormLabel>
-                              </FormItem>
-                              <FormItem className="flex items-center space-x-2 space-y-0">
-                                <FormControl>
-                                  <RadioGroupItem value="futures" />
-                                </FormControl>
-                                <FormLabel className="font-normal cursor-pointer">
-                                  Futures
-                                </FormLabel>
-                              </FormItem>
-                            </RadioGroup>
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
+                    {/* Exchange Type - hidden since the exchange will determine this */}
 
                     {/* Broker Selection */}
-                    {selectedExchange?.requiresBroker && (
+                    {selectedExchange && (
                       <FormField
                         control={form.control}
                         name="brokerId"
@@ -407,17 +373,20 @@ export default function ExchangeConnectPage() {
                             <div className="flex justify-between">
                               <FormLabel>Broker</FormLabel>
                               {!selectedExchange.requiresBroker && (
-                                <span className="text-xs text-neutral-500">Leave empty for direct exchange connection</span>
+                                <span className="text-xs text-neutral-500">Optional - direct exchange connection available</span>
+                              )}
+                              {selectedExchange.requiresBroker && (
+                                <span className="text-xs text-orange-500 font-medium">Required for this exchange</span>
                               )}
                             </div>
                             <Select 
                               onValueChange={field.onChange} 
                               value={field.value}
-                              disabled={brokersLoading}
+                              disabled={brokersLoading || !brokers?.length}
                             >
                               <FormControl>
                                 <SelectTrigger>
-                                  <SelectValue placeholder={selectedExchange.requiresBroker ? "Select a broker" : "None (Direct Connection)"} />
+                                  <SelectValue placeholder={brokers?.length ? "Select a broker" : "No brokers available"} />
                                 </SelectTrigger>
                               </FormControl>
                               <SelectContent>
@@ -429,6 +398,9 @@ export default function ExchangeConnectPage() {
                                     {broker.name}
                                   </SelectItem>
                                 ))}
+                                {brokers?.length === 0 && (
+                                  <div className="p-2 text-sm text-neutral-500">No brokers available for this exchange</div>
+                                )}
                               </SelectContent>
                             </Select>
                             <FormMessage />
@@ -444,35 +416,65 @@ export default function ExchangeConnectPage() {
                       <FormField
                         control={form.control}
                         name="authMethod"
-                        render={({ field }) => (
-                          <FormItem className="space-y-3">
-                            <FormControl>
-                              <RadioGroup
-                                onValueChange={field.onChange}
-                                value={field.value}
-                                className="flex space-x-4 mb-4"
-                              >
-                                <FormItem className="flex items-center space-x-2 space-y-0">
-                                  <FormControl>
-                                    <RadioGroupItem value="api" />
-                                  </FormControl>
-                                  <FormLabel className="font-normal cursor-pointer">
-                                    API Keys
-                                  </FormLabel>
-                                </FormItem>
-                                <FormItem className="flex items-center space-x-2 space-y-0">
-                                  <FormControl>
-                                    <RadioGroupItem value="credentials" />
-                                  </FormControl>
-                                  <FormLabel className="font-normal cursor-pointer">
-                                    Credentials
-                                  </FormLabel>
-                                </FormItem>
-                              </RadioGroup>
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
+                        render={({ field }) => {
+                          // Determine available auth methods based on broker or exchange
+                          const selectedBrokerId = form.watch("brokerId");
+                          const selectedBroker = selectedBrokerId ? brokers?.find(b => b.id.toString() === selectedBrokerId) : null;
+                          
+                          // Use broker's auth methods if available, otherwise use default options
+                          const authMethods = selectedBroker?.authMethods || ['api', 'credentials'];
+                          const showApiOption = authMethods.includes('api');
+                          const showCredentialsOption = authMethods.includes('credentials');
+                          
+                          // If current selected auth method isn't supported by this broker, switch to first available
+                          useEffect(() => {
+                            if (selectedBroker && authMethods.length > 0 && !authMethods.includes(field.value)) {
+                              field.onChange(authMethods[0]);
+                            }
+                          }, [selectedBrokerId, field, authMethods]);
+                          
+                          return (
+                            <FormItem className="space-y-3">
+                              <div className="flex justify-between">
+                                <FormLabel>Authentication Method</FormLabel>
+                                {selectedBroker && (
+                                  <span className="text-xs text-neutral-500">
+                                    {selectedBroker.name} supports: {authMethods.join(', ')}
+                                  </span>
+                                )}
+                              </div>
+                              <FormControl>
+                                <RadioGroup
+                                  onValueChange={field.onChange}
+                                  value={field.value}
+                                  className="flex space-x-4 mb-4"
+                                >
+                                  {showApiOption && (
+                                    <FormItem className="flex items-center space-x-2 space-y-0">
+                                      <FormControl>
+                                        <RadioGroupItem value="api" />
+                                      </FormControl>
+                                      <FormLabel className="font-normal cursor-pointer">
+                                        API Keys
+                                      </FormLabel>
+                                    </FormItem>
+                                  )}
+                                  {showCredentialsOption && (
+                                    <FormItem className="flex items-center space-x-2 space-y-0">
+                                      <FormControl>
+                                        <RadioGroupItem value="credentials" />
+                                      </FormControl>
+                                      <FormLabel className="font-normal cursor-pointer">
+                                        Credentials
+                                      </FormLabel>
+                                    </FormItem>
+                                  )}
+                                </RadioGroup>
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          );
+                        }}
                       />
 
                       {/* API Authentication Fields */}
