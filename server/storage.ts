@@ -168,7 +168,7 @@ export class MemStorage implements IStorage {
     // Create demo user
     this.createUser({
       username: 'demo',
-      password: '2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824.59c483abb0f4eee92bd28ba49e8605a2', // "1234" hashed
+      password: '3e3c741f83418619d8a13ab424f0d985068df6d568f5ce224845a779338b88290ebd2bdb5273ed8a9e6802dd8e1e6c7d31a1df387993a08903878dfc1cf16e28.601b3042abd3d02ad6ed3a8c16ccb4ba', // "1234" hashed
       email: 'demo@example.com',
       firstName: 'Demo',
       lastName: 'User'
