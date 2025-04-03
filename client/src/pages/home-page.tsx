@@ -18,10 +18,14 @@ export default function HomePage() {
 
   const { data: connections, isLoading: connectionsLoading } = useQuery<Connection[]>({
     queryKey: ["/api/connections"],
+    refetchOnMount: true,
+    refetchOnWindowFocus: true,
   });
 
   const { data: exchanges, isLoading: exchangesLoading } = useQuery<Exchange[]>({
     queryKey: ["/api/exchanges"],
+    refetchOnMount: true,
+    refetchOnWindowFocus: true,
   });
   
   // Set default exchange mutation

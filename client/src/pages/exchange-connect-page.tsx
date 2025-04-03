@@ -86,13 +86,19 @@ export default function ExchangeConnectPage() {
       const res = await apiRequest("POST", "/api/connections", data);
       return await res.json();
     },
-    onSuccess: () => {
+    onSuccess: (connection) => {
+      // Make sure to fully invalidate the connections query cache
+      queryClient.invalidateQueries({ queryKey: ["/api/connections"] });
+      
       toast({
         title: "Connection successful",
         description: "You have successfully connected to the exchange",
       });
-      queryClient.invalidateQueries({ queryKey: ["/api/connections"] });
-      setLocation("/");
+      
+      // Short delay to ensure query invalidation completes before redirecting
+      setTimeout(() => {
+        setLocation("/");
+      }, 500);
     },
     onError: (error: Error) => {
       toast({
