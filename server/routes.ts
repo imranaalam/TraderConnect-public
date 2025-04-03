@@ -466,6 +466,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Implementation of AKD account details using the SOAP API client
   async function getAKDAccountDetails(credentials: Record<string, string>) {
     try {
+      console.log('Credentials received for AKD connection:', JSON.stringify({
+        username: credentials.username,
+        password: credentials.password ? '******' : 'missing',
+        fields: Object.keys(credentials)
+      }));
+      
       // Check if we have the minimum required credentials
       if (!credentials.username || !credentials.password) {
         throw new Error('Missing required credentials for AKD');
@@ -484,6 +490,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
       } else {
         console.log(`Successfully fetched actual AKD data for ${credentials.username}`);
       }
+      
+      // Log the account details structure for debugging
+      console.log('Account details structure:', JSON.stringify({
+        tradingAccounts: {
+          headers: accountDetails.tradingAccounts.headers,
+          dataLength: accountDetails.tradingAccounts.data.length,
+          sampleRow: accountDetails.tradingAccounts.data[0]
+        },
+        orderHistory: {
+          headers: accountDetails.orderHistory.headers,
+          dataLength: accountDetails.orderHistory.data.length
+        },
+        positions: {
+          headers: accountDetails.positions.headers,
+          dataLength: accountDetails.positions.data.length
+        },
+        accountInfo: {
+          headers: accountDetails.accountInfo.headers,
+          dataLength: accountDetails.accountInfo.data.length
+        }
+      }, null, 2));
       
       // Return the account details
       return accountDetails;

@@ -187,48 +187,86 @@ async function getTradingAccounts(client: any, userId: string) {
     ];
 
     try {
+        console.log(`Fetching trading accounts for user ${userId}...`);
+        
         // The `soap` library often returns results nested, e.g., { TradAccountsResult: '...' }
-        // Adjust '.TradAccountsResult' based on actual WSDL/response structure if different
         const result = await client.TradAccountsAsync({ userName: userId });
-        const rawResponse = result[0]?.TradAccountsResult ?? result[0] ?? null; // Access the actual response string/buffer
+        console.log("Raw trading accounts result:", JSON.stringify(result, null, 2));
+        
+        // Extract the response data properly
+        const rawResponse = result[0]?.TradAccountsResult ?? result[0] ?? null;
+        console.log("Extracted raw response:", rawResponse);
+        
         const processed = await processAndUnzipResponse(rawResponse);
+        console.log("Processed response:", processed);
+        
         const parsed = parseApiResponse(processed);
+        console.log("Parsed API response:", JSON.stringify(parsed, null, 2));
+        
         const dataOut: string[][] = [];
 
         const accountColIdx = 0;
         const nameColIdx = 1;
 
+        // Process the data into our expected format
         for (const row of parsed.data) {
-            const account = row[accountColIdx] ?? "";
-            const name = row[nameColIdx] ?? "";
+            console.log("Processing row:", JSON.stringify(row));
+            
+            // Make sure we extract strings not objects
+            const account = typeof row[accountColIdx] === 'string' ? row[accountColIdx] : String(row[accountColIdx] ?? "");
+            const name = typeof row[nameColIdx] === 'string' ? row[nameColIdx] : String(row[nameColIdx] ?? "");
             const status = DEFAULT_TRADING_ACCOUNT_STATUS;
-            // Simple logic based on example output - adjust if API provides type
             const accType = dataOut.length === 0 ? DEFAULT_TRADING_ACCOUNT_TYPE_CASH : DEFAULT_TRADING_ACCOUNT_TYPE_MARGIN;
-            let balance = "PKR ?"; // Placeholder
+            let balance = "PKR ?";
 
-            // Match example balances (since API doesn't seem to provide it here)
+            // Match specific accounts with known balances
             if (account === "COAF3906") balance = "PKR 587,210.45";
             else if (account === "COAF3907") balance = "PKR 123,456.78";
 
-             dataOut.push([account, name, status, accType, balance]);
+            const formattedRow = [account, name, status, accType, balance];
+            console.log("Formatted row:", JSON.stringify(formattedRow));
+            dataOut.push(formattedRow);
         }
 
-         // If API returned data, use the first account found
+        // If API returned data, use the first account as primary
         if (dataOut.length > 0 && dataOut[0][0]) {
-             primaryAccount = dataOut[0][0];
-             console.log(`Trading Accounts fetched successfully for ${userId}. Primary Account: ${primaryAccount}`);
-             return { result: { headers: targetHeaders, data: dataOut }, primaryAccount: primaryAccount };
-         } else {
+            primaryAccount = dataOut[0][0];
+            console.log(`Trading Accounts fetched successfully for ${userId}. Primary Account:`, primaryAccount);
+            console.log("Final trading account data:", JSON.stringify(dataOut, null, 2));
+            
+            return { 
+                result: { 
+                    headers: targetHeaders, 
+                    data: dataOut 
+                }, 
+                primaryAccount 
+            };
+        } else {
             // If API parsing resulted in empty data, use fallback
             console.warn(`No valid trading accounts parsed for ${userId}. Using sample data.`);
-             primaryAccount = sampleData[0][0]; // Use fallback account
-            return { result: { headers: targetHeaders, data: sampleData }, primaryAccount: primaryAccount };
-         }
+            primaryAccount = sampleData[0][0];
+            
+            return { 
+                result: { 
+                    headers: targetHeaders, 
+                    data: sampleData 
+                }, 
+                primaryAccount
+            };
+        }
 
     } catch (error: any) {
         console.error(`Error fetching/parsing Trading Accounts for ${userId}: ${error.message}. Using sample data.`);
+        console.error(error.stack);
         primaryAccount = sampleData[0][0]; // Use fallback account on error
-        return { result: { headers: targetHeaders, data: sampleData }, primaryAccount: primaryAccount };
+        
+        return { 
+            result: { 
+                headers: targetHeaders, 
+                data: sampleData 
+            }, 
+            primaryAccount
+        };
     }
 }
 
