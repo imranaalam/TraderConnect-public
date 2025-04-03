@@ -158,15 +158,38 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const validatedData = connectionRequestSchema.parse(req.body);
       
-      // Create connection for the authenticated user
-      const connection = await storage.createConnection({
-        userId: req.user!.id,
-        exchangeId: validatedData.exchangeId,
-        brokerId: validatedData.brokerId,
-        authMethod: validatedData.authMethod,
-        credentials: validatedData.credentials,
-        lastConnected: new Date().toISOString(),
-      });
+      // Check if this connection already exists for the user
+      const userConnections = await storage.getConnectionsByUserId(req.user!.id);
+      const existingConnection = userConnections.find(conn => 
+        conn.exchangeId === validatedData.exchangeId && 
+        conn.brokerId === validatedData.brokerId
+      );
+      
+      let connection;
+      
+      if (existingConnection) {
+        // Update existing connection instead of creating a new one
+        console.log(`Updating existing connection with ID ${existingConnection.id}`);
+        connection = await storage.updateConnection(existingConnection.id, {
+          authMethod: validatedData.authMethod,
+          credentials: validatedData.credentials,
+          lastConnected: new Date().toISOString(),
+          isActive: true
+        });
+      } else {
+        // Create new connection
+        console.log(`Creating new connection for user ${req.user!.id}`);
+        connection = await storage.createConnection({
+          userId: req.user!.id,
+          exchangeId: validatedData.exchangeId,
+          brokerId: validatedData.brokerId,
+          authMethod: validatedData.authMethod,
+          credentials: validatedData.credentials,
+          lastConnected: new Date().toISOString(),
+          isActive: true,
+          isDefault: false // Not default by default
+        });
+      }
 
       res.status(201).json(connection);
     } catch (error) {
@@ -264,6 +287,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
         updates.isActive = req.body.isActive;
       }
       
+      if (req.body.isDefault !== undefined) {
+        updates.isDefault = req.body.isDefault;
+        
+        // If setting this connection as default, unset any other default connections
+        // for the same exchange or broker
+        if (req.body.isDefault) {
+          const userConnections = await storage.getConnectionsByUserId(req.user!.id);
+          
+          for (const conn of userConnections) {
+            if (conn.id !== id && conn.isDefault && 
+                ((conn.exchangeId === connection.exchangeId) || 
+                 (conn.brokerId && conn.brokerId === connection.brokerId))) {
+              await storage.updateConnection(conn.id, { isDefault: false });
+            }
+          }
+        }
+      }
+      
       const updatedConnection = await storage.updateConnection(id, updates);
       
       // Update lastConnected timestamp if credentials were changed
@@ -274,6 +315,44 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       res.status(200).json(updatedConnection);
     } catch (error) {
+      next(error);
+    }
+  });
+  
+  // Set a connection as default
+  app.post("/api/connections/:id/set-default", async (req, res, next) => {
+    if (!req.isAuthenticated()) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
+
+    try {
+      const id = parseInt(req.params.id);
+      const connection = await storage.getConnection(id);
+      
+      // Check if connection belongs to current user
+      if (!connection || connection.userId !== req.user!.id) {
+        return res.status(404).json({ message: "Connection not found" });
+      }
+      
+      // Get all user connections to update default status
+      const userConnections = await storage.getConnectionsByUserId(req.user!.id);
+      
+      // First, set all connections of the same exchange/broker type to non-default
+      for (const conn of userConnections) {
+        if (conn.id !== id && conn.isDefault && 
+            ((conn.exchangeId === connection.exchangeId) || 
+             (conn.brokerId && conn.brokerId === connection.brokerId))) {
+          await storage.updateConnection(conn.id, { isDefault: false });
+        }
+      }
+      
+      // Then set this connection as default
+      const updatedConnection = await storage.updateConnection(id, { isDefault: true });
+      
+      console.log(`Set connection ${id} as default for user ${req.user!.id}`);
+      res.status(200).json(updatedConnection);
+    } catch (error) {
+      console.error('Error setting default connection:', error);
       next(error);
     }
   });

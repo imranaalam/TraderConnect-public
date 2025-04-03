@@ -217,13 +217,42 @@ export class MemStorage implements IStorage {
 
   // Initialize sample data
   private initializeSampleData(): void {
-    // Create demo user
+    // Create demo users
+    // "1234" hashed with salt
+    const demoPasswordHash = '3e3c741f83418619d8a13ab424f0d985068df6d568f5ce224845a779338b88290ebd2bdb5273ed8a9e6802dd8e1e6c7d31a1df387993a08903878dfc1cf16e28.601b3042abd3d02ad6ed3a8c16ccb4ba';
+    
+    // Main demo user
     this.createUser({
       username: 'demo',
-      password: '3e3c741f83418619d8a13ab424f0d985068df6d568f5ce224845a779338b88290ebd2bdb5273ed8a9e6802dd8e1e6c7d31a1df387993a08903878dfc1cf16e28.601b3042abd3d02ad6ed3a8c16ccb4ba', // "1234" hashed
+      password: demoPasswordHash,
       email: 'demo@example.com',
       firstName: 'Demo',
       lastName: 'User'
+    });
+    
+    // Additional users with the same password for testing
+    this.createUser({
+      username: 'jawadfoq',
+      password: demoPasswordHash,
+      email: 'jawad@example.com',
+      firstName: 'Jawad',
+      lastName: 'Foqan'
+    });
+    
+    this.createUser({
+      username: 'demo_akd',
+      password: demoPasswordHash,
+      email: 'akd@example.com',
+      firstName: 'AKD',
+      lastName: 'Demo'
+    });
+    
+    this.createUser({
+      username: 'trader1',
+      password: demoPasswordHash,
+      email: 'trader1@example.com',
+      firstName: 'Pro',
+      lastName: 'Trader'
     });
     
     // Define market types and their respective exchanges
