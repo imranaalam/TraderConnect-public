@@ -160,12 +160,30 @@ export class MemStorage implements IStorage {
 
   async createConnection(insertConnection: InsertConnection): Promise<Connection> {
     const id = this.connectionIdCounter++;
+    
+    // Check if this should be the default connection (first one for user)
+    let isDefault = false;
+    let hasExistingConnections = false;
+    
+    for (const conn of this.connections.values()) {
+      if (conn.userId === insertConnection.userId) {
+        hasExistingConnections = true;
+        break;
+      }
+    }
+    
+    // If this is the first connection for the user, make it default
+    if (!hasExistingConnections) {
+      isDefault = true;
+    }
+    
     const connection: Connection = { 
       ...insertConnection, 
       id,
       brokerId: insertConnection.brokerId || null,
       accountId: insertConnection.accountId || null,
       isActive: insertConnection.isActive !== undefined ? insertConnection.isActive : true,
+      isDefault: insertConnection.isDefault !== undefined ? insertConnection.isDefault : isDefault,
       lastConnected: insertConnection.lastConnected || null
     };
     this.connections.set(id, connection);
@@ -175,6 +193,18 @@ export class MemStorage implements IStorage {
   async updateConnection(id: number, connectionUpdate: Partial<Connection>): Promise<Connection | undefined> {
     const connection = this.connections.get(id);
     if (!connection) return undefined;
+    
+    // If setting this connection as default, unset any other default connections for this user
+    if (connectionUpdate.isDefault) {
+      // Find all connections for this user
+      for (const [connId, conn] of this.connections.entries()) {
+        if (conn.userId === connection.userId && conn.isDefault && connId !== id) {
+          // Unset default on other connections
+          const updatedConn = { ...conn, isDefault: false };
+          this.connections.set(connId, updatedConn);
+        }
+      }
+    }
     
     const updatedConnection = { ...connection, ...connectionUpdate };
     this.connections.set(id, updatedConnection);

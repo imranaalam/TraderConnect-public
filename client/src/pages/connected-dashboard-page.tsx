@@ -1,6 +1,6 @@
 import { useParams, Link, useLocation } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { Card, CardContent } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
@@ -8,11 +8,14 @@ import { useToast } from "@/hooks/use-toast";
 import { Connection, Exchange, Broker } from "@shared/schema";
 import { format } from "date-fns";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { ArrowRightIcon, Edit, Key } from "lucide-react";
+import { ArrowRightIcon, Edit, Key, RefreshCw, Eye, EyeOff, Info, ListFilter, BarChart3 } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
+import { Table, TableHead, TableHeader, TableRow, TableBody, TableCell } from "@/components/ui/table"; 
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 export default function ConnectedDashboardPage() {
   const { id } = useParams();
@@ -20,6 +23,8 @@ export default function ConnectedDashboardPage() {
   const [_, setLocation] = useLocation();
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [credentials, setCredentials] = useState<Record<string, string>>({});
+  const [showAccountDetails, setShowAccountDetails] = useState(false);
+  const [isLoadingDetails, setIsLoadingDetails] = useState(false);
   
   // Fetch connection details
   const { data: connection, isLoading: connectionLoading } = useQuery<Connection>({
@@ -92,6 +97,30 @@ export default function ConnectedDashboardPage() {
         variant: "destructive",
       });
     },
+  });
+  
+  // Fetch account details
+  const { data: accountDetails, isLoading: accountDetailsLoading, refetch: refetchAccountDetails } = useQuery({
+    queryKey: [`/api/account-details/${id}`],
+    enabled: showAccountDetails,
+    queryFn: async () => {
+      setIsLoadingDetails(true);
+      try {
+        const res = await fetch(`/api/account-details/${id}`);
+        if (!res.ok) throw new Error("Failed to fetch account details");
+        return await res.json();
+      } catch (error) {
+        console.error("Error fetching account details:", error);
+        toast({
+          title: "Failed to load account details",
+          description: error instanceof Error ? error.message : "Unknown error",
+          variant: "destructive",
+        });
+        throw error;
+      } finally {
+        setIsLoadingDetails(false);
+      }
+    }
   });
 
   const isLoading = connectionLoading || exchangesLoading || brokersLoading;
@@ -278,6 +307,257 @@ export default function ConnectedDashboardPage() {
             {disconnectMutation.isPending ? "Disconnecting..." : "Disconnect"}
           </Button>
         </div>
+      </div>
+
+      {/* Account Details Section */}
+      <div className="mt-6">
+        <Card>
+          <CardHeader>
+            <div className="flex justify-between items-center">
+              <div>
+                <CardTitle>Account Details</CardTitle>
+                <CardDescription>
+                  View detailed information about your trading account
+                </CardDescription>
+              </div>
+              <Button 
+                variant={showAccountDetails ? "default" : "outline"} 
+                onClick={() => {
+                  if (!showAccountDetails) {
+                    setShowAccountDetails(true);
+                  } else {
+                    refetchAccountDetails();
+                  }
+                }}
+                disabled={isLoadingDetails}
+              >
+                {isLoadingDetails ? (
+                  <>
+                    <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+                    Loading...
+                  </>
+                ) : showAccountDetails ? (
+                  <>
+                    <RefreshCw className="mr-2 h-4 w-4" />
+                    Refresh
+                  </>
+                ) : (
+                  <>
+                    <Eye className="mr-2 h-4 w-4" />
+                    View Details
+                  </>
+                )}
+              </Button>
+            </div>
+          </CardHeader>
+          
+          {showAccountDetails && (
+            <CardContent>
+              {isLoadingDetails ? (
+                <div className="flex flex-col space-y-6">
+                  {[1, 2, 3].map((i) => (
+                    <div key={i} className="space-y-2">
+                      <Skeleton className="h-6 w-64" />
+                      <Skeleton className="h-32 w-full" />
+                    </div>
+                  ))}
+                </div>
+              ) : accountDetails?.message ? (
+                <Card className="border border-yellow-200 bg-yellow-50">
+                  <CardContent className="pt-6">
+                    <div className="flex items-center text-yellow-800">
+                      <Info className="h-5 w-5 mr-2" />
+                      <p>{accountDetails.message}</p>
+                    </div>
+                  </CardContent>
+                </Card>
+              ) : accountDetails ? (
+                <Tabs defaultValue="portfolio" className="w-full mt-2">
+                  <TabsList className="w-full justify-start border-b pb-0 mb-4">
+                    <TabsTrigger value="portfolio" className="data-[state=active]:border-b-2 data-[state=active]:border-primary">
+                      <BarChart3 className="h-4 w-4 mr-2" />
+                      Portfolio
+                    </TabsTrigger>
+                    <TabsTrigger value="orders" className="data-[state=active]:border-b-2 data-[state=active]:border-primary">
+                      <ListFilter className="h-4 w-4 mr-2" />
+                      Orders
+                    </TabsTrigger>
+                    <TabsTrigger value="accounts" className="data-[state=active]:border-b-2 data-[state=active]:border-primary">
+                      <Key className="h-4 w-4 mr-2" />
+                      Accounts
+                    </TabsTrigger>
+                  </TabsList>
+                  
+                  <TabsContent value="portfolio" className="mt-2">
+                    <Accordion type="multiple" className="w-full">
+                      {accountDetails.portfolioHoldings && (
+                        <AccordionItem value="holdings">
+                          <AccordionTrigger className="text-lg font-semibold">
+                            Portfolio Holdings
+                          </AccordionTrigger>
+                          <AccordionContent>
+                            <div className="overflow-x-auto">
+                              <Table>
+                                <TableHeader>
+                                  <TableRow>
+                                    {accountDetails.portfolioHoldings.headers.map((header: string, i: number) => (
+                                      <TableHead key={i} className="font-semibold">{header}</TableHead>
+                                    ))}
+                                  </TableRow>
+                                </TableHeader>
+                                <TableBody>
+                                  {accountDetails.portfolioHoldings.data.map((row: string[], i: number) => (
+                                    <TableRow key={i}>
+                                      {row.map((cell: string, j: number) => (
+                                        <TableCell key={j}>{cell}</TableCell>
+                                      ))}
+                                    </TableRow>
+                                  ))}
+                                </TableBody>
+                              </Table>
+                            </div>
+                          </AccordionContent>
+                        </AccordionItem>
+                      )}
+                      
+                      {accountDetails.marginDetails && (
+                        <AccordionItem value="margin">
+                          <AccordionTrigger className="text-lg font-semibold">
+                            Margin Details
+                          </AccordionTrigger>
+                          <AccordionContent>
+                            <div className="overflow-x-auto">
+                              <Table>
+                                <TableHeader>
+                                  <TableRow>
+                                    {accountDetails.marginDetails.headers.map((header: string, i: number) => (
+                                      <TableHead key={i} className="font-semibold">{header}</TableHead>
+                                    ))}
+                                  </TableRow>
+                                </TableHeader>
+                                <TableBody>
+                                  {accountDetails.marginDetails.data.map((row: string[], i: number) => (
+                                    <TableRow key={i}>
+                                      {row.map((cell: string, j: number) => (
+                                        <TableCell key={j}>{cell}</TableCell>
+                                      ))}
+                                    </TableRow>
+                                  ))}
+                                </TableBody>
+                              </Table>
+                            </div>
+                          </AccordionContent>
+                        </AccordionItem>
+                      )}
+                    </Accordion>
+                  </TabsContent>
+                  
+                  <TabsContent value="orders" className="mt-2">
+                    <Accordion type="multiple" className="w-full">
+                      {accountDetails.orderHistory && (
+                        <AccordionItem value="orders" defaultChecked>
+                          <AccordionTrigger className="text-lg font-semibold">
+                            Order History
+                          </AccordionTrigger>
+                          <AccordionContent>
+                            <div className="overflow-x-auto">
+                              <Table>
+                                <TableHeader>
+                                  <TableRow>
+                                    {accountDetails.orderHistory.headers.map((header: string, i: number) => (
+                                      <TableHead key={i} className="font-semibold">{header}</TableHead>
+                                    ))}
+                                  </TableRow>
+                                </TableHeader>
+                                <TableBody>
+                                  {accountDetails.orderHistory.data.map((row: string[], i: number) => (
+                                    <TableRow key={i}>
+                                      {row.map((cell: string, j: number) => (
+                                        <TableCell key={j}>{cell}</TableCell>
+                                      ))}
+                                    </TableRow>
+                                  ))}
+                                </TableBody>
+                              </Table>
+                            </div>
+                          </AccordionContent>
+                        </AccordionItem>
+                      )}
+                    </Accordion>
+                  </TabsContent>
+                  
+                  <TabsContent value="accounts" className="mt-2">
+                    <Accordion type="multiple" className="w-full">
+                      {accountDetails.tradingAccounts && (
+                        <AccordionItem value="accounts" defaultChecked>
+                          <AccordionTrigger className="text-lg font-semibold">
+                            Trading Accounts
+                          </AccordionTrigger>
+                          <AccordionContent>
+                            <div className="overflow-x-auto">
+                              <Table>
+                                <TableHeader>
+                                  <TableRow>
+                                    {accountDetails.tradingAccounts.headers.map((header: string, i: number) => (
+                                      <TableHead key={i} className="font-semibold">{header}</TableHead>
+                                    ))}
+                                  </TableRow>
+                                </TableHeader>
+                                <TableBody>
+                                  {accountDetails.tradingAccounts.data.map((row: string[], i: number) => (
+                                    <TableRow key={i}>
+                                      {row.map((cell: string, j: number) => (
+                                        <TableCell key={j}>{cell}</TableCell>
+                                      ))}
+                                    </TableRow>
+                                  ))}
+                                </TableBody>
+                              </Table>
+                            </div>
+                          </AccordionContent>
+                        </AccordionItem>
+                      )}
+                      
+                      {accountDetails.accountStatement && (
+                        <AccordionItem value="statement">
+                          <AccordionTrigger className="text-lg font-semibold">
+                            Account Statement
+                          </AccordionTrigger>
+                          <AccordionContent>
+                            <div className="overflow-x-auto">
+                              <Table>
+                                <TableHeader>
+                                  <TableRow>
+                                    {accountDetails.accountStatement.headers.map((header: string, i: number) => (
+                                      <TableHead key={i} className="font-semibold">{header}</TableHead>
+                                    ))}
+                                  </TableRow>
+                                </TableHeader>
+                                <TableBody>
+                                  {accountDetails.accountStatement.data.map((row: string[], i: number) => (
+                                    <TableRow key={i}>
+                                      {row.map((cell: string, j: number) => (
+                                        <TableCell key={j}>{cell}</TableCell>
+                                      ))}
+                                    </TableRow>
+                                  ))}
+                                </TableBody>
+                              </Table>
+                            </div>
+                          </AccordionContent>
+                        </AccordionItem>
+                      )}
+                    </Accordion>
+                  </TabsContent>
+                </Tabs>
+              ) : (
+                <div className="text-center py-10">
+                  <p className="text-neutral-500">Select "View Details" to fetch account information</p>
+                </div>
+              )}
+            </CardContent>
+          )}
+        </Card>
       </div>
 
       {/* Edit Credentials Dialog */}

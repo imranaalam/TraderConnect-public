@@ -34,6 +34,7 @@ export const connections = pgTable("connections", {
   authMethod: text("auth_method").notNull(), // "api" or "credentials"
   credentials: jsonb("credentials").notNull(), // Encrypted credentials
   isActive: boolean("is_active").default(true),
+  isDefault: boolean("is_default").default(false),
   lastConnected: text("last_connected"),
   accountId: text("account_id"),
 });

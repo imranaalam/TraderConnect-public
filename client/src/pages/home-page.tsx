@@ -1,17 +1,20 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation } from "@tanstack/react-query";
 import { useAuth } from "@/hooks/use-auth";
 import { Link } from "wouter";
 import WelcomeMessage from "@/components/WelcomeMessage";
 import { Button } from "@/components/ui/button";
-import { PlusIcon, ArrowRight } from "lucide-react";
+import { PlusIcon, ArrowRight, StarIcon } from "lucide-react";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Connection, Exchange, Broker } from "@shared/schema";
 import { formatDistanceToNow } from "date-fns";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useToast } from "@/hooks/use-toast";
+import { apiRequest, queryClient } from "@/lib/queryClient";
 
 export default function HomePage() {
   const { user } = useAuth();
+  const { toast } = useToast();
 
   const { data: connections, isLoading: connectionsLoading } = useQuery<Connection[]>({
     queryKey: ["/api/connections"],
@@ -19,6 +22,30 @@ export default function HomePage() {
 
   const { data: exchanges, isLoading: exchangesLoading } = useQuery<Exchange[]>({
     queryKey: ["/api/exchanges"],
+  });
+  
+  // Set default exchange mutation
+  const setDefaultMutation = useMutation({
+    mutationFn: async (connectionId: number) => {
+      const res = await apiRequest("PATCH", `/api/connections/${connectionId}`, {
+        isDefault: true
+      });
+      return await res.json();
+    },
+    onSuccess: () => {
+      toast({
+        title: "Default Exchange Set",
+        description: "This exchange will be used as your default trading account",
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/connections"] });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Failed to set default exchange",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
   });
 
   if (connectionsLoading || exchangesLoading) {
@@ -85,7 +112,14 @@ export default function HomePage() {
               <Card key={connection.id}>
                 <CardHeader className="pb-2">
                   <div className="flex justify-between items-start">
-                    <CardTitle className="text-lg">{getExchangeName(connection.exchangeId)}</CardTitle>
+                    <div className="flex items-center gap-1">
+                      <CardTitle className="text-lg">{getExchangeName(connection.exchangeId)}</CardTitle>
+                      {connection.isDefault && (
+                        <span title="Default Exchange" className="ml-1">
+                          <StarIcon className="h-4 w-4 text-yellow-500 fill-yellow-500" />
+                        </span>
+                      )}
+                    </div>
                     <Badge variant={connection.isActive ? "default" : "secondary"}>
                       {connection.isActive ? "Active" : "Inactive"}
                     </Badge>
@@ -114,16 +148,52 @@ export default function HomePage() {
                     </div>
                   </div>
                 </CardContent>
-                <CardFooter className="flex justify-between border-t pt-4">
-                  <Button variant="outline" size="sm">
-                    Disconnect
-                  </Button>
-                  <Link href={`/dashboard/${connection.id}`}>
-                    <Button size="sm" className="flex items-center gap-1">
-                      View
-                      <ArrowRight className="h-3 w-3 ml-1" />
+                <CardFooter className="flex items-center justify-between border-t pt-4">
+                  <div className="flex space-x-2">
+                    {!connection.isDefault && (
+                      <Button 
+                        variant="outline" 
+                        size="sm"
+                        className="flex items-center"
+                        onClick={() => setDefaultMutation.mutate(connection.id)}
+                        disabled={setDefaultMutation.isPending}
+                      >
+                        <StarIcon className="h-3 w-3 mr-1" />
+                        Set Default
+                      </Button>
+                    )}
+                  </div>
+                  <div className="flex space-x-2">
+                    <Button 
+                      variant="outline" 
+                      size="sm"
+                      onClick={() => window.confirm("Are you sure you want to disconnect?") && 
+                                    apiRequest("DELETE", `/api/connections/${connection.id}`)
+                                      .then(() => {
+                                        toast({
+                                          title: "Exchange disconnected",
+                                          description: "The exchange has been disconnected successfully"
+                                        });
+                                        queryClient.invalidateQueries({ queryKey: ["/api/connections"] });
+                                      })
+                                      .catch(error => {
+                                        toast({
+                                          title: "Error disconnecting exchange",
+                                          description: error.message,
+                                          variant: "destructive"
+                                        });
+                                      })
+                      }
+                    >
+                      Disconnect
                     </Button>
-                  </Link>
+                    <Link href={`/dashboard/${connection.id}`}>
+                      <Button size="sm" className="flex items-center gap-1">
+                        View
+                        <ArrowRight className="h-3 w-3 ml-1" />
+                      </Button>
+                    </Link>
+                  </div>
                 </CardFooter>
               </Card>
             ))}

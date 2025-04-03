@@ -349,6 +349,113 @@ export async function registerRoutes(app: Express): Promise<Server> {
       next(error);
     }
   });
+  
+  // Account Details Endpoints
+  app.get("/api/account-details/:connectionId", async (req, res, next) => {
+    if (!req.isAuthenticated()) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
+    
+    try {
+      const connectionId = parseInt(req.params.connectionId);
+      const connection = await storage.getConnection(connectionId);
+      
+      // Check if connection belongs to current user
+      if (!connection || connection.userId !== req.user!.id) {
+        return res.status(404).json({ message: "Connection not found" });
+      }
+      
+      // Get broker details
+      const exchange = await storage.getExchange(connection.exchangeId);
+      let broker = null;
+      if (connection.brokerId) {
+        broker = await storage.getBroker(connection.brokerId);
+      }
+      
+      let accountDetails = null;
+      
+      // Based on broker, fetch the appropriate account details
+      if (broker?.name === 'AKD') {
+        accountDetails = await getAKDAccountDetails(connection.credentials as Record<string, string>);
+      } else if (broker?.name === 'MKK') {
+        accountDetails = { message: "MKK account details not yet implemented" };
+      } else if (broker?.name === 'Zerodha') {
+        accountDetails = { message: "Zerodha account details not yet implemented" };
+      } else if (exchange?.name === 'Binance') {
+        accountDetails = { message: "Binance account details not yet implemented" };
+      } else {
+        accountDetails = { message: "Account details not available for this connection type" };
+      }
+      
+      res.json(accountDetails);
+    } catch (error) {
+      console.error('Error fetching account details:', error);
+      next(error);
+    }
+  });
+  
+  // Mock implementation of AKD account details based on the Python code
+  async function getAKDAccountDetails(credentials: Record<string, string>) {
+    try {
+      // Check if we have the minimum required credentials
+      if (!credentials.username || !credentials.password) {
+        throw new Error('Missing required credentials for AKD');
+      }
+      
+      // If this is the demo account "jawadfoq" or our test account, return sample data
+      if (credentials.username === 'jawadfoq' || credentials.username === 'demo_akd') {
+        // Mock data based on the Python script sample output
+        return {
+          tradingAccounts: {
+            headers: ["Account", "Name", "Status", "Type", "Balance"],
+            data: [
+              ["COAF3906", "Jawad Foqan", "Active", "Cash", "PKR 587,210.45"],
+              ["COAF3907", "Jawad Foqan", "Active", "Margin", "PKR 123,456.78"]
+            ]
+          },
+          orderHistory: {
+            headers: ["Order ID", "Symbol", "Side", "Type", "Quantity", "Price", "Status", "Date"],
+            data: [
+              ["ORD001", "MARI", "Buy", "Limit", "100", "PKR 1,234.56", "Completed", "2025-03-01"],
+              ["ORD002", "ENGRO", "Sell", "Market", "50", "PKR 987.65", "Completed", "2025-03-02"],
+              ["ORD003", "LUCK", "Buy", "Limit", "75", "PKR 567.89", "Rejected", "2025-03-03"]
+            ]
+          },
+          accountStatement: {
+            headers: ["Date", "Description", "Debit", "Credit", "Balance"],
+            data: [
+              ["2025-03-01", "Deposit", "", "PKR 100,000.00", "PKR 100,000.00"],
+              ["2025-03-02", "Buy MARI x100", "PKR 123,456.00", "", "PKR -23,456.00"],
+              ["2025-03-03", "Sell ENGRO x50", "", "PKR 49,382.50", "PKR 25,926.50"],
+              ["2025-03-04", "Dividend MARI", "", "PKR 5,000.00", "PKR 30,926.50"]
+            ]
+          },
+          portfolioHoldings: {
+            headers: ["Symbol", "Quantity", "Avg Price", "Current Price", "Market Value", "Profit/Loss"],
+            data: [
+              ["MARI", "100", "PKR 1,234.56", "PKR 1,345.67", "PKR 134,567.00", "+PKR 11,111.00 (9.0%)"],
+              ["LUCK", "75", "PKR 567.89", "PKR 598.76", "PKR 44,907.00", "+PKR 2,315.25 (5.4%)"]
+            ]
+          },
+          marginDetails: {
+            headers: ["Particular", "Value"],
+            data: [
+              ["Available Margin", "PKR 587,210.45"],
+              ["Used Margin", "PKR 179,474.00"],
+              ["Margin Call Level", "70%"],
+              ["Current Margin Usage", "23.4%"]
+            ]
+          }
+        };
+      }
+      
+      // For other users, return a placeholder indicating real API call would be made
+      throw new Error('Invalid username for AKD or real API connection required');
+    } catch (error: any) {
+      console.error('AKD account details error:', error);
+      throw new Error(`Failed to fetch AKD account details: ${error.message}`);
+    }
+  }
 
   const httpServer = createServer(app);
   return httpServer;
