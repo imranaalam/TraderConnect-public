@@ -165,6 +165,15 @@ export class MemStorage implements IStorage {
 
   // Initialize sample data
   private initializeSampleData(): void {
+    // Create demo user
+    this.createUser({
+      username: 'demo',
+      password: '2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824.59c483abb0f4eee92bd28ba49e8605a2', // "1234" hashed
+      email: 'demo@example.com',
+      firstName: 'Demo',
+      lastName: 'User'
+    });
+    
     // Sample Exchanges
     const cryptoExchanges = [
       { name: 'Binance', type: 'spot', marketType: 'crypto', requiresBroker: false },

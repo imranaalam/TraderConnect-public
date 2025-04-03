@@ -71,6 +71,14 @@ export default function AuthPage() {
     });
   }
 
+  // Handle demo login
+  function handleDemoLogin() {
+    loginMutation.mutate({
+      username: "demo",
+      password: "1234",
+    });
+  }
+
   // Handle registration form submission
   function onRegisterSubmit(data: RegisterFormValues) {
     registerMutation.mutate({
@@ -197,6 +205,18 @@ export default function AuthPage() {
                       >
                         {loginMutation.isPending ? "Logging in..." : "Login"}
                       </Button>
+                      
+                      <div className="text-center mt-4">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          className="w-full"
+                          onClick={handleDemoLogin}
+                          disabled={loginMutation.isPending}
+                        >
+                          Demo Login (username: demo, password: 1234)
+                        </Button>
+                      </div>
 
                       <div className="text-center mt-4">
                         <span className="text-sm text-neutral-600">Don't have an account?</span>
