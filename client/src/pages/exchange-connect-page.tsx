@@ -1,0 +1,497 @@
+import { zodResolver } from "@hookform/resolvers/zod";
+import { useForm } from "react-hook-form";
+import { z } from "zod";
+import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
+import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { useToast } from "@/hooks/use-toast";
+import { useMutation, useQuery } from "@tanstack/react-query";
+import { useLocation } from "wouter";
+import { Card, CardContent } from "@/components/ui/card";
+import { Exchange, Broker, connectionRequestSchema, ConnectionRequest } from "@shared/schema";
+import { apiRequest, queryClient } from "@/lib/queryClient";
+import { BoltIcon, UserIcon, ClipboardCheckIcon } from "lucide-react";
+import { useState, useEffect } from "react";
+
+// Form Schema
+const formSchema = z.object({
+  marketType: z.string().min(1, "Market type is required"),
+  exchangeId: z.string().min(1, "Exchange is required"),
+  exchangeType: z.enum(["spot", "futures"]),
+  brokerId: z.string().optional(),
+  authMethod: z.enum(["api", "credentials"]),
+  // API auth fields
+  apiKey: z.string().optional(),
+  apiSecret: z.string().optional(),
+  // Credential auth fields
+  username: z.string().optional(),
+  password: z.string().optional(),
+  accountNumber: z.string().optional(),
+  pin: z.string().optional(),
+}).refine(data => {
+  if (data.authMethod === "api") {
+    return !!data.apiKey && !!data.apiSecret;
+  }
+  return true;
+}, {
+  message: "API key and secret are required for API authentication",
+  path: ["apiKey"],
+}).refine(data => {
+  if (data.authMethod === "credentials") {
+    return !!data.username && !!data.password;
+  }
+  return true;
+}, {
+  message: "Username and password are required for credentials authentication",
+  path: ["username"],
+});
+
+type FormValues = z.infer<typeof formSchema>;
+
+export default function ExchangeConnectPage() {
+  const { toast } = useToast();
+  const [_, setLocation] = useLocation();
+  const [selectedMarketType, setSelectedMarketType] = useState<string>("");
+  const [selectedExchangeId, setSelectedExchangeId] = useState<string>("");
+  const [selectedExchange, setSelectedExchange] = useState<Exchange | null>(null);
+
+  // Fetch all exchanges
+  const { data: exchanges, isLoading: exchangesLoading } = useQuery<Exchange[]>({
+    queryKey: ["/api/exchanges"],
+  });
+
+  // Fetch filtered exchanges by market type
+  const { data: filteredExchanges, isLoading: filteredExchangesLoading } = useQuery<Exchange[]>({
+    queryKey: ["/api/exchanges", selectedMarketType],
+    enabled: !!selectedMarketType,
+  });
+
+  // Fetch brokers for the selected exchange
+  const { data: brokers, isLoading: brokersLoading } = useQuery<Broker[]>({
+    queryKey: ["/api/brokers", selectedExchangeId],
+    enabled: !!selectedExchangeId,
+  });
+
+  // Create connection mutation
+  const connectionMutation = useMutation({
+    mutationFn: async (data: ConnectionRequest) => {
+      const res = await apiRequest("POST", "/api/connections", data);
+      return await res.json();
+    },
+    onSuccess: () => {
+      toast({
+        title: "Connection successful",
+        description: "You have successfully connected to the exchange",
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/connections"] });
+      setLocation("/");
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Connection failed",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const form = useForm<FormValues>({
+    resolver: zodResolver(formSchema),
+    defaultValues: {
+      marketType: "",
+      exchangeId: "",
+      exchangeType: "spot",
+      brokerId: "",
+      authMethod: "api",
+      apiKey: "",
+      apiSecret: "",
+      username: "",
+      password: "",
+      accountNumber: "",
+      pin: "",
+    },
+  });
+
+  // Update exchange options when market type changes
+  useEffect(() => {
+    if (selectedMarketType) {
+      form.setValue("exchangeId", "");
+      setSelectedExchangeId("");
+      setSelectedExchange(null);
+      form.setValue("brokerId", "");
+    }
+  }, [selectedMarketType, form]);
+
+  // Update broker and exchange options when exchange changes
+  useEffect(() => {
+    if (selectedExchangeId && exchanges) {
+      const exchange = exchanges.find(e => e.id.toString() === selectedExchangeId);
+      setSelectedExchange(exchange || null);
+      form.setValue("brokerId", "");
+    }
+  }, [selectedExchangeId, exchanges, form]);
+
+  function onSubmit(data: FormValues) {
+    // Prepare credentials object based on auth method
+    let credentials = {};
+    
+    if (data.authMethod === "api") {
+      credentials = {
+        apiKey: data.apiKey,
+        apiSecret: data.apiSecret,
+      };
+    } else {
+      credentials = {
+        username: data.username,
+        password: data.password,
+        ...(data.accountNumber && { accountNumber: data.accountNumber }),
+        ...(data.pin && { pin: data.pin }),
+      };
+    }
+
+    // Create connection request
+    const connectionRequest: ConnectionRequest = {
+      exchangeId: parseInt(data.exchangeId),
+      brokerId: data.brokerId ? parseInt(data.brokerId) : undefined,
+      authMethod: data.authMethod,
+      credentials,
+    };
+
+    connectionMutation.mutate(connectionRequest);
+  }
+
+  return (
+    <div className="mt-8">
+      <div className="md:grid md:grid-cols-3 md:gap-6">
+        {/* Left Section */}
+        <div className="md:col-span-1">
+          <div className="px-4 sm:px-0">
+            <h3 className="text-lg font-medium leading-6 text-neutral-900">Exchange Connection</h3>
+            <p className="mt-1 text-sm text-neutral-600">
+              Connect to your preferred trading exchange or broker to begin trading.
+            </p>
+            <div className="mt-4">
+              <div className="my-4 border border-neutral-200 rounded-md p-4 bg-neutral-50">
+                <h4 className="text-sm font-medium text-neutral-900 mb-2">Connection Status</h4>
+                <div className="flex items-center text-sm text-neutral-700">
+                  <span className="h-3 w-3 bg-neutral-300 rounded-full mr-2"></span>
+                  <span>Not connected</span>
+                </div>
+              </div>
+              
+              <div className="space-y-4 mt-6">
+                <div className="flex items-center text-sm text-neutral-700">
+                  <BoltIcon className="h-5 w-5 text-primary mr-2" />
+                  <span>Fast API connections</span>
+                </div>
+                <div className="flex items-center text-sm text-neutral-700">
+                  <ClipboardCheckIcon className="h-5 w-5 text-primary mr-2" />
+                  <span>Multiple account support</span>
+                </div>
+                <div className="flex items-center text-sm text-neutral-700">
+                  <UserIcon className="h-5 w-5 text-primary mr-2" />
+                  <span>Secure credential handling</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Right Section - Connection Form */}
+        <div className="mt-5 md:mt-0 md:col-span-2">
+          <Card>
+            <CardContent className="pt-6 auth-form-container">
+              <div>
+                <h2 className="text-xl font-medium text-neutral-900 mb-6">Connect to Exchange or Broker</h2>
+                
+                <Form {...form}>
+                  <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
+                    {/* Market Type Selection */}
+                    <FormField
+                      control={form.control}
+                      name="marketType"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Market Type</FormLabel>
+                          <Select 
+                            onValueChange={(value) => {
+                              field.onChange(value);
+                              setSelectedMarketType(value);
+                            }} 
+                            value={field.value}
+                          >
+                            <FormControl>
+                              <SelectTrigger>
+                                <SelectValue placeholder="Select market type" />
+                              </SelectTrigger>
+                            </FormControl>
+                            <SelectContent>
+                              <SelectItem value="equity">Equity</SelectItem>
+                              <SelectItem value="crypto">Cryptocurrency</SelectItem>
+                              <SelectItem value="forex">Forex</SelectItem>
+                              <SelectItem value="commodity">Commodities</SelectItem>
+                              <SelectItem value="metals">Metals</SelectItem>
+                            </SelectContent>
+                          </Select>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+
+                    {/* Exchange Selection */}
+                    <FormField
+                      control={form.control}
+                      name="exchangeId"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Exchange</FormLabel>
+                          <Select 
+                            onValueChange={(value) => {
+                              field.onChange(value);
+                              setSelectedExchangeId(value);
+                            }} 
+                            value={field.value}
+                            disabled={!selectedMarketType || filteredExchangesLoading}
+                          >
+                            <FormControl>
+                              <SelectTrigger>
+                                <SelectValue placeholder="Select an exchange" />
+                              </SelectTrigger>
+                            </FormControl>
+                            <SelectContent>
+                              {filteredExchanges?.map((exchange) => (
+                                <SelectItem key={exchange.id} value={exchange.id.toString()}>
+                                  {exchange.name}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+
+                    {/* Exchange Type */}
+                    <FormField
+                      control={form.control}
+                      name="exchangeType"
+                      render={({ field }) => (
+                        <FormItem className="space-y-3">
+                          <FormLabel>Exchange Type</FormLabel>
+                          <FormControl>
+                            <RadioGroup
+                              onValueChange={field.onChange}
+                              value={field.value}
+                              className="flex space-x-4"
+                            >
+                              <FormItem className="flex items-center space-x-2 space-y-0">
+                                <FormControl>
+                                  <RadioGroupItem value="spot" />
+                                </FormControl>
+                                <FormLabel className="font-normal cursor-pointer">
+                                  Spot
+                                </FormLabel>
+                              </FormItem>
+                              <FormItem className="flex items-center space-x-2 space-y-0">
+                                <FormControl>
+                                  <RadioGroupItem value="futures" />
+                                </FormControl>
+                                <FormLabel className="font-normal cursor-pointer">
+                                  Futures
+                                </FormLabel>
+                              </FormItem>
+                            </RadioGroup>
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+
+                    {/* Broker Selection */}
+                    {selectedExchange?.requiresBroker && (
+                      <FormField
+                        control={form.control}
+                        name="brokerId"
+                        render={({ field }) => (
+                          <FormItem>
+                            <div className="flex justify-between">
+                              <FormLabel>Broker</FormLabel>
+                              {!selectedExchange.requiresBroker && (
+                                <span className="text-xs text-neutral-500">Leave empty for direct exchange connection</span>
+                              )}
+                            </div>
+                            <Select 
+                              onValueChange={field.onChange} 
+                              value={field.value}
+                              disabled={brokersLoading}
+                            >
+                              <FormControl>
+                                <SelectTrigger>
+                                  <SelectValue placeholder={selectedExchange.requiresBroker ? "Select a broker" : "None (Direct Connection)"} />
+                                </SelectTrigger>
+                              </FormControl>
+                              <SelectContent>
+                                {!selectedExchange.requiresBroker && (
+                                  <SelectItem value="">None (Direct Connection)</SelectItem>
+                                )}
+                                {brokers?.map((broker) => (
+                                  <SelectItem key={broker.id} value={broker.id.toString()}>
+                                    {broker.name}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                    )}
+
+                    {/* Authentication Method */}
+                    <div className="border-t border-neutral-200 pt-4">
+                      <h3 className="text-sm font-medium text-neutral-900 mb-3">Authentication Method</h3>
+                      
+                      <FormField
+                        control={form.control}
+                        name="authMethod"
+                        render={({ field }) => (
+                          <FormItem className="space-y-3">
+                            <FormControl>
+                              <RadioGroup
+                                onValueChange={field.onChange}
+                                value={field.value}
+                                className="flex space-x-4 mb-4"
+                              >
+                                <FormItem className="flex items-center space-x-2 space-y-0">
+                                  <FormControl>
+                                    <RadioGroupItem value="api" />
+                                  </FormControl>
+                                  <FormLabel className="font-normal cursor-pointer">
+                                    API Keys
+                                  </FormLabel>
+                                </FormItem>
+                                <FormItem className="flex items-center space-x-2 space-y-0">
+                                  <FormControl>
+                                    <RadioGroupItem value="credentials" />
+                                  </FormControl>
+                                  <FormLabel className="font-normal cursor-pointer">
+                                    Credentials
+                                  </FormLabel>
+                                </FormItem>
+                              </RadioGroup>
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+
+                      {/* API Authentication Fields */}
+                      {form.watch("authMethod") === "api" && (
+                        <div className="space-y-4">
+                          <FormField
+                            control={form.control}
+                            name="apiKey"
+                            render={({ field }) => (
+                              <FormItem>
+                                <FormLabel>API Key</FormLabel>
+                                <FormControl>
+                                  <Input placeholder="Enter your API key" {...field} />
+                                </FormControl>
+                                <FormMessage />
+                              </FormItem>
+                            )}
+                          />
+                          <FormField
+                            control={form.control}
+                            name="apiSecret"
+                            render={({ field }) => (
+                              <FormItem>
+                                <FormLabel>API Secret</FormLabel>
+                                <FormControl>
+                                  <Input type="password" placeholder="Enter your API secret" {...field} />
+                                </FormControl>
+                                <FormMessage />
+                              </FormItem>
+                            )}
+                          />
+                        </div>
+                      )}
+
+                      {/* Credentials Authentication Fields */}
+                      {form.watch("authMethod") === "credentials" && (
+                        <div className="space-y-4">
+                          <FormField
+                            control={form.control}
+                            name="username"
+                            render={({ field }) => (
+                              <FormItem>
+                                <FormLabel>Username</FormLabel>
+                                <FormControl>
+                                  <Input placeholder="Enter your username" {...field} />
+                                </FormControl>
+                                <FormMessage />
+                              </FormItem>
+                            )}
+                          />
+                          <FormField
+                            control={form.control}
+                            name="password"
+                            render={({ field }) => (
+                              <FormItem>
+                                <FormLabel>Password</FormLabel>
+                                <FormControl>
+                                  <Input type="password" placeholder="Enter your password" {...field} />
+                                </FormControl>
+                                <FormMessage />
+                              </FormItem>
+                            )}
+                          />
+                          <FormField
+                            control={form.control}
+                            name="accountNumber"
+                            render={({ field }) => (
+                              <FormItem>
+                                <FormLabel>Account Number (optional)</FormLabel>
+                                <FormControl>
+                                  <Input placeholder="Enter your account number" {...field} />
+                                </FormControl>
+                                <FormMessage />
+                              </FormItem>
+                            )}
+                          />
+                          <FormField
+                            control={form.control}
+                            name="pin"
+                            render={({ field }) => (
+                              <FormItem>
+                                <FormLabel>PIN (optional)</FormLabel>
+                                <FormControl>
+                                  <Input type="password" placeholder="Enter your PIN" {...field} />
+                                </FormControl>
+                                <FormMessage />
+                              </FormItem>
+                            )}
+                          />
+                        </div>
+                      )}
+                    </div>
+
+                    <Button 
+                      type="submit" 
+                      className="w-full" 
+                      disabled={connectionMutation.isPending}
+                    >
+                      {connectionMutation.isPending ? "Connecting..." : "Connect"}
+                    </Button>
+                  </form>
+                </Form>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+    </div>
+  );
+}
