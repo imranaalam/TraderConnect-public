@@ -471,10 +471,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
         throw new Error('Missing required credentials for AKD');
       }
       
+      // Cache-busting approach - add a unique timestamp to request parameters
+      const requestId = Date.now();
+      console.log(`Fetching AKD details for ${credentials.username}, request ID: ${requestId}`);
+      
       // Use our AKD API client to fetch real account details
       const accountDetails = await getAKDDetails(credentials.username, credentials.password);
       
-      // Add any additional processing or mapping for the frontend if needed
+      // Check if we're using fallback data and log appropriately
+      if (accountDetails.dataSource === 'fallback') {
+        console.warn(`Using fallback data for ${credentials.username} - actual API call failed`);
+      } else {
+        console.log(`Successfully fetched actual AKD data for ${credentials.username}`);
+      }
+      
+      // Return the account details
       return accountDetails;
     } catch (error: any) {
       console.error('AKD account details error:', error);

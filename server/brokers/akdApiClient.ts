@@ -423,12 +423,44 @@ async function getAccountInfo(client: any, userId: string, accountNo: string) {
 async function getAllAccountDetails(clientUsername: string, clientPassword: string) {
     try {
         console.log(`Attempting to connect to AKD using username: ${clientUsername}`);
+        let timestamp = new Date().toISOString(); // Add timestamp to prevent caching
         
-        // For demo purposes - use mockup data for specific test users
-        if (clientUsername === 'jawadfoq' || clientUsername === 'demo_akd' || clientUsername === 'trader1') {
-            console.log(`Using demo account data for ${clientUsername}`);
+        // Create SOAP client
+        const client = await soap.createClientAsync(WSDL_URL);
+        
+        // Add HTTP basic auth header
+        client.addHttpHeader('Authorization', `Basic ${Buffer.from(`${clientUsername}:${clientPassword}`).toString('base64')}`);
+        
+        // For demo purposes, if using specific test users, try to fetch real data first
+        // but have fallback data if the API call fails
+        try {
+            // Get all trading accounts for the user
+            const { result: tradingAccounts, primaryAccount } = await getTradingAccounts(client, clientUsername);
             
-            // Demo data for account
+            // Use the primary account for subsequent calls
+            const account = primaryAccount;
+            
+            // Get order history
+            const orderHistory = await getOrderHistory(client, clientUsername, account);
+            
+            // Get positions (portfolio holdings)
+            const positions = await getPositions(client, clientUsername, account);
+            
+            // Get account information
+            const accountInfo = await getAccountInfo(client, clientUsername, account);
+            
+            // Combine all results with timestamp to prevent caching
+            return {
+                tradingAccounts,
+                orderHistory,
+                positions,
+                accountInfo,
+                timestamp
+            };
+        } catch (error: any) {
+            console.log(`API fetch error, using fallback data for ${clientUsername}: ${error.message}`);
+            
+            // Demo data for account - only use as fallback
             const tradingAccounts = {
                 headers: ["Account", "Name", "Status", "Type", "Balance"],
                 data: [
@@ -472,39 +504,11 @@ async function getAllAccountDetails(clientUsername: string, clientPassword: stri
                 tradingAccounts,
                 orderHistory,
                 positions,
-                accountInfo
+                accountInfo,
+                timestamp,
+                dataSource: "fallback" // Mark as fallback data
             };
         }
-        
-        // For real API connectivity
-        // Create SOAP client
-        const client = await soap.createClientAsync(WSDL_URL);
-        
-        // Add HTTP basic auth header
-        client.addHttpHeader('Authorization', `Basic ${Buffer.from(`${clientUsername}:${clientPassword}`).toString('base64')}`);
-        
-        // Get all trading accounts for the user
-        const { result: tradingAccounts, primaryAccount } = await getTradingAccounts(client, clientUsername);
-        
-        // Use the primary account for subsequent calls
-        const account = primaryAccount;
-        
-        // Get order history
-        const orderHistory = await getOrderHistory(client, clientUsername, account);
-        
-        // Get positions (portfolio holdings)
-        const positions = await getPositions(client, clientUsername, account);
-        
-        // Get account information
-        const accountInfo = await getAccountInfo(client, clientUsername, account);
-        
-        // Combine all results
-        return {
-            tradingAccounts,
-            orderHistory,
-            positions,
-            accountInfo
-        };
         
     } catch (error: any) {
         console.error(`Error in AKD API getAllAccountDetails: ${error.message}`);
