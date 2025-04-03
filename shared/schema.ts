@@ -82,3 +82,13 @@ export const connectionRequestSchema = z.object({
 });
 
 export type ConnectionRequest = z.infer<typeof connectionRequestSchema>;
+
+// Connection Test Schema
+export const connectionTestSchema = z.object({
+  exchangeId: z.number(),
+  brokerId: z.number().optional(),
+  authMethod: z.enum(["api", "credentials"]),
+  credentials: z.record(z.string(), z.string()),
+});
+
+export type ConnectionTest = z.infer<typeof connectionTestSchema>;

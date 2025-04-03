@@ -1,0 +1,435 @@
+#!/usr/bin/env python3
+# getalldetails-v6.py
+import gzip
+import base64
+import requests
+import xml.etree.ElementTree as ET
+from datetime import datetime, timedelta
+
+from colorama import init, Fore
+from prettytable import PrettyTable
+from requests.auth import HTTPBasicAuth
+from tabulate import tabulate  # For an additional order-history display
+from zeep import Client
+from zeep.transports import Transport
+
+# Initialize colorama for automatic color reset
+init(autoreset=True)
+
+# ============================
+# Configuration & Inputs
+# ============================
+HTTP_USERNAME = "myservice"
+HTTP_PASSWORD = "12345678"
+WSDL_URL = "http://online.akdtrade.biz/TradeCastService/LoginServerService?wsdl"
+# WSDL_URL = "http://online2.maksltrade.biz/TradeCastService/LoginServerService?wsdl"
+
+# Initial values (USER_ID is specified; ACCOUNT will be updated after TradAccounts)
+USER_ID = "jawadfoq"
+ACCOUNT = USER_ID
+
+# Set date range (last 30 days) for internal use (if needed)
+end_date = datetime.now().strftime("%Y-%m-%d")
+start_date = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d")
+
+# Other defaults
+DEFAULT_FROM = "WEB"
+DEFAULT_PINCODE = "1111"
+DEFAULT_SCRIP = "MARI"
+DEFAULT_TYPE = ""
+DEFAULT_INFO_TYPE = "test"
+DEFAULT_LOGSTRING = (
+    "Trader1;Market1;MARI;Account1;100.50;ORD001;HORD001;1000;900;100;"
+    "TICK001;100500;Buy;Regular;2025-03-04 10:00:00;OK"
+)
+
+# ----------------------------
+# Additional Inputs for new endpoints (using same date range)
+# ----------------------------
+print("=== Additional Endpoint Inputs ===")
+ADDITIONAL_ACCOUNT = "COAF3906"
+common_start_date = input("Enter start date (e.g., Mar 01, 2025; default: Mar 01, 2025): ").strip() or "Mar 01, 2025"
+common_end_date = input("Enter end date (e.g., Mar 12, 2025; default: Mar 12, 2025): ").strip() or "Mar 12, 2025"
+
+# ============================
+# SOAP Client Setup using Zeep
+# ============================
+session = requests.Session()
+session.auth = HTTPBasicAuth(HTTP_USERNAME, HTTP_PASSWORD)
+transport = Transport(session=session)
+client = Client(wsdl=WSDL_URL, transport=transport)
+
+# ============================
+# Helper Functions
+# ============================
+def process_response(resp):
+    """
+    Process the response:
+      - If it is bytes and gzip compressed, decompress it.
+      - Otherwise decode as UTF-8.
+    """
+    if resp is None:
+        return None
+    if isinstance(resp, bytes):
+        # Check if it appears gzip-compressed
+        if resp.startswith(b"\x1f\x8b"):
+            try:
+                return gzip.decompress(resp).decode("utf-8")
+            except Exception:
+                return resp.decode("utf-8", errors="replace")
+        else:
+            return resp.decode("utf-8", errors="replace")
+    return resp
+
+
+def unzip_string_from_bytes_custom(data):
+    """
+    Mimics the Java CompressManager.unzipStringFromBytes:
+    If data is bytes (or bytearray), decompress using gzip;
+    otherwise assume it is base64-encoded, then decompress.
+    """
+    try:
+        if isinstance(data, (bytes, bytearray)):
+            return gzip.decompress(data).decode("utf-8")
+        else:
+            decoded = base64.b64decode(data)
+            return gzip.decompress(decoded).decode("utf-8")
+    except Exception as e:
+        print(Fore.RED + f"Decompression error: {e}")
+        return ""
+
+
+def display_response_table(response_str, title):
+    """
+    Convert a response string into a pretty table. The response string
+    is expected to have rows separated by '|', and columns separated by ';'.
+    
+    This updated version more gracefully handles "No data" scenarios and 
+    ensures we always have a clear header row (unless there's exactly one
+    row of actual data).
+    """
+    if not response_str or not response_str.strip():
+        print("No data available.")
+        return
+
+    # Check for typical "no data" phrases right away
+    lower_stripped = response_str.strip().lower()
+    if "no record" in lower_stripped or "no data" in lower_stripped:
+        print("No data available.")
+        return
+
+    try:
+        # Split the entire block by '|'
+        rows = [r.strip() for r in response_str.strip().split("|") if r.strip()]
+        if not rows:
+            print("No data available.")
+            return
+
+        # If we have more than one row, treat the first row as headers
+        if len(rows) > 1:
+            # First row is headers
+            possible_headers = rows[0].split(";")
+            headers = [h.strip() for h in possible_headers]
+            data_rows = rows[1:]
+        else:
+            # We only have one row, so let's apply default column names
+            single_row_split = rows[0].split(";")
+            # If the row has semicolons, let's just create "Col1", "Col2", ...
+            headers = [f"Col{i}" for i in range(1, len(single_row_split) + 1)]
+            data_rows = [rows[0]]
+
+        # Handle duplicate header names
+        used = {}
+        unique_headers = []
+        for h in headers:
+            if h not in used:
+                used[h] = 1
+                unique_headers.append(h)
+            else:
+                used[h] += 1
+                unique_headers.append(f"{h}_{used[h]}")
+
+        table = PrettyTable(unique_headers)
+        table.title = title
+
+        # Add each row's data
+        for row_str in data_rows:
+            cols = [c.strip() for c in row_str.split(";")]
+            # If the row has more columns than the headers, cut it
+            if len(cols) > len(unique_headers):
+                cols = cols[: len(unique_headers)]
+            # If the row has fewer columns, pad it
+            elif len(cols) < len(unique_headers):
+                cols.extend([""] * (len(unique_headers) - len(cols)))
+            table.add_row(cols)
+
+        print(table.get_string())
+
+    except Exception as e:
+        print(Fore.RED + f"Error parsing response into table: {e}")
+        print(Fore.RED + "Raw response:", response_str)
+
+
+def print_input_and_output(op_name, params, resp):
+    """
+    Print the function call details and its output.
+    """
+    print(f"\nFunction call: {op_name}")
+    print("┌─── Inputs ──────────────────────────────┐")
+    for k, v in params.items():
+        print(f"  {k}: {v}")
+    print("└──────────────────────────────────────────┘")
+    processed = process_response(resp)
+    print("Output:")
+    if processed is None or (isinstance(processed, str) and not processed.strip()):
+        print("No data available.")
+    elif isinstance(processed, bool):
+        print(processed)
+    elif isinstance(processed, str) and "|" in processed and ";" in processed:
+        display_response_table(processed, op_name)
+    else:
+        print(processed)
+
+
+def extract_account_numbers(response_str):
+    """
+    Extract account numbers from a response string (rows separated by '|', columns by ';').
+    We treat the first column of each data row as the "account number."
+    """
+    account_numbers = []
+    if not response_str or not response_str.strip():
+        return account_numbers
+
+    try:
+        rows = [r.strip() for r in response_str.strip().split("|") if r.strip()]
+        if not rows:
+            return account_numbers
+
+        # If multiple rows, skip the header row
+        data_rows = rows[1:] if len(rows) > 1 else rows
+        for row in data_rows:
+            cols = [c.strip() for c in row.split(";") if c.strip()]
+            if cols:
+                # The first column is assumed to be the account number
+                account_numbers.append(cols[0])
+    except Exception as e:
+        print(Fore.RED + f"Error extracting account numbers: {e}")
+
+    return account_numbers
+
+
+# ============================
+# Category 4: Trading Accounts & Transactions
+# ============================
+print("=== Category 4: Trading Accounts & Transactions ===")
+try:
+    op = "TradAccounts"
+    params = {"userName": USER_ID}
+    trad_accounts_resp = client.service.TradAccounts(**params)
+    print_input_and_output(op, params, trad_accounts_resp)
+    processed_trad_accounts = process_response(trad_accounts_resp)
+    account_numbers = extract_account_numbers(processed_trad_accounts)
+    if account_numbers:
+        default_account = account_numbers[0]
+        print(f"\nUsing default account: {default_account}")
+        ACCOUNT = default_account
+    else:
+        print("No account numbers found. Using existing ACCOUNT value.")
+except Exception as e:
+    print(Fore.RED + f"Error calling TradAccounts: {e}")
+
+# Additional GetOrderHistory (Tabulate example)
+try:
+    print("\n=== Additional GetOrderHistory with Tabulate ===")
+    raw = client.service.GetOrderHistory(
+        trader=USER_ID,
+        accountNo=ADDITIONAL_ACCOUNT,
+        pincode="",
+        scrip="ALL",
+        type="ALL",
+        startDate=common_start_date,
+        endDate=common_end_date,
+        **{"from": "OrderHistory"}  # from is a reserved keyword in Python
+    )
+    txt = unzip_string_from_bytes_custom(raw)
+    rows = [r for r in txt.strip().split("|") if r]
+    if not rows:
+        print("No data available for Additional GetOrderHistory call.")
+    else:
+        headers = rows[0].split(";")
+        data = [row.split(";") for row in rows[1:]]
+        print(tabulate(data, headers=headers, tablefmt="pretty"))
+except Exception as e:
+    print(Fore.RED + f"Error in Additional GetOrderHistory call: {e}")
+
+# Additional GetAccountStatement call (using common date range)
+try:
+    print("\n=== Additional GetAccountStatement Call ===")
+    response = client.service.GetAccountStatement(
+        userName=USER_ID,
+        accountNo=ADDITIONAL_ACCOUNT,
+        startDate=common_start_date,
+        endDate=common_end_date,
+        **{"from": "TradeCast"}
+    )
+    processed_response = process_response(response)
+    print("Response from Additional GetAccountStatement:")
+    display_response_table(processed_response, "Additional GetAccountStatement Call")
+except Exception as e:
+    print(Fore.RED + f"Error in Additional GetAccountStatement call: {e}")
+
+# GetOutstandingLog
+try:
+    op = "GetOutstandingLog"
+    params = {"username": USER_ID}
+    resp = client.service.GetOutstandingLog(**params)
+    print_input_and_output(op, params, resp)
+except Exception as e:
+    print(Fore.RED + f"Error calling GetOutstandingLog: {e}")
+
+# GetMarginCallByTrader
+try:
+    op = "GetMarginCallByTrader"
+    params = {"userName": USER_ID}
+    resp = client.service.GetMarginCallByTrader(**params)
+    print_input_and_output(op, params, resp)
+except Exception as e:
+    print(Fore.RED + f"Error calling GetMarginCallByTrader: {e}")
+
+# CommSummray
+try:
+    op = "CommSummray"
+    params = {"userName": USER_ID, "account": ACCOUNT}
+    resp = client.service.CommSummray(**params)
+    print_input_and_output(op, params, resp)
+except Exception as e:
+    print(Fore.RED + f"Error calling CommSummray: {e}")
+
+
+# ============================
+# Category 5: Daily Trading Activity & Logs
+# ============================
+print("\n=== Category 5: Daily Trading Activity & Logs ===")
+try:
+    op = "GetTradeLog"
+    params = {"username": USER_ID}
+    resp = client.service.GetTradeLog(**params)
+    print_input_and_output(op, params, resp)
+except Exception as e:
+    print(Fore.RED + f"Error calling GetTradeLog: {e}")
+
+try:
+    op = "GetDailyActivityLog"
+    params = {"username": USER_ID}
+    resp = client.service.GetDailyActivityLog(**params)
+    print_input_and_output(op, params, resp)
+except Exception as e:
+    print(Fore.RED + f"Error calling GetDailyActivityLog: {e}")
+
+try:
+    op = "WriteLog"
+    params = {"userName": USER_ID, "text": "Test log entry"}
+    resp = client.service.WriteLog(**params)
+    print_input_and_output(op, params, resp)
+except Exception as e:
+    print(Fore.RED + f"Error calling WriteLog: {e}")
+
+try:
+    op = "getCompressedData"
+    params = {"userID": USER_ID, "infoType": DEFAULT_INFO_TYPE, "otherInfo": ""}
+    resp = client.service.getCompressedData(**params)
+    print_input_and_output(op, params, resp)
+except Exception as e:
+    print(Fore.RED + f"Error calling getCompressedData: {e}")
+
+
+# ============================
+# Category 6: Risk Management & Exposure
+# ============================
+print("\n=== Category 6: Risk Management & Exposure ===")
+try:
+    op = "GetExposureDynamic"
+    params = {"UserID": USER_ID, "account": ACCOUNT, "approved": "0"}
+    resp = client.service.GetExposureDynamic(**params)
+    print_input_and_output(op, params, resp)
+except Exception as e:
+    print(Fore.RED + f"Error calling GetExposureDynamic: {e}")
+
+try:
+    op = "GetOpenCDCPosition"
+    params = {"accountNo": ACCOUNT}
+    resp = client.service.GetOpenCDCPosition(**params)
+    print_input_and_output(op, params, resp)
+except Exception as e:
+    print(Fore.RED + f"Error calling GetOpenCDCPosition: {e}")
+
+try:
+    op = "GetOpenPosition"
+    params = {"UserID": USER_ID, "Account": ACCOUNT}
+    resp = client.service.GetOpenPosition(**params)
+    print_input_and_output(op, params, resp)
+except Exception as e:
+    print(Fore.RED + f"Error calling GetOpenPosition: {e}")
+
+try:
+    op = "GetCollateral"
+    params = {"UserID": USER_ID, "Account": ACCOUNT}
+    resp = client.service.GetCollateral(**params)
+    print_input_and_output(op, params, resp)
+except Exception as e:
+    print(Fore.RED + f"Error calling GetCollateral: {e}")
+
+
+# ============================
+# Category 7: Market Info (getInfo calls)
+# ============================
+# print("\n=== Category 7: Market Info ===")
+# 
+# try:
+#     op = "getInfo (SectorPerformance)"
+#     params = {"userID": "", "infoType": "SectorPerformance=", "otherInfo": ""}
+#     resp = client.service.getInfo(**params)
+#     print_input_and_output(op, params, resp)
+# except Exception as e:
+#     print(Fore.RED + f"Error calling getInfo (SectorPerformance): {e}")
+# 
+# try:
+#     op = "getInfo (TopLeaders)"
+#     params = {"userID": "", "infoType": "TopLeaders=", "otherInfo": ""}
+#     resp = client.service.getInfo(**params)
+#     print_input_and_output(op, params, resp)
+# except Exception as e:
+#     print(Fore.RED + f"Error calling getInfo (TopLeaders): {e}")
+# 
+# try:
+#     op = "getInfo (TopGainers)"
+#     params = {"userID": "", "infoType": "TopGainers=", "otherInfo": ""}
+#     resp = client.service.getInfo(**params)
+#     print_input_and_output(op, params, resp)
+# except Exception as e:
+#     print(Fore.RED + f"Error calling getInfo (TopGainers): {e}")
+# 
+# try:
+#     op = "getInfo (MarketPercentIncrease)"
+#     params = {"userID": "", "infoType": "MarketPercentIncrease=", "otherInfo": ""}
+#     resp = client.service.getInfo(**params)
+#     print_input_and_output(op, params, resp)
+# except Exception as e:
+#     print(Fore.RED + f"Error calling getInfo (MarketPercentIncrease): {e}")
+# 
+# try:
+#     op = "getInfo (TopLosers)"
+#     params = {"userID": "", "infoType": "TopLosers=", "otherInfo": ""}
+#     resp = client.service.getInfo(**params)
+#     print_input_and_output(op, params, resp)
+# except Exception as e:
+#     print(Fore.RED + f"Error calling getInfo (TopLosers): {e}")
+# 
+# try:
+#     op = "getInfo (MarketPercentDecrease)"
+#     params = {"userID": "", "infoType": "MarketPercentDecrease=", "otherInfo": ""}
+#     resp = client.service.getInfo(**params)
+#     print_input_and_output(op, params, resp)
+# except Exception as e:
+#     print(Fore.RED + f"Error calling getInfo (MarketPercentDecrease): {e}")
+

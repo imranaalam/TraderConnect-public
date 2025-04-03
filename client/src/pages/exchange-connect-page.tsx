@@ -10,9 +10,9 @@ import { useToast } from "@/hooks/use-toast";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { Card, CardContent } from "@/components/ui/card";
-import { Exchange, Broker, connectionRequestSchema, ConnectionRequest } from "@shared/schema";
+import { Exchange, Broker, connectionRequestSchema, connectionTestSchema, ConnectionRequest, ConnectionTest } from "@shared/schema";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { BoltIcon, UserIcon, ClipboardCheckIcon } from "lucide-react";
+import { BoltIcon, UserIcon, ClipboardCheckIcon, CheckCircle2Icon, XCircleIcon } from "lucide-react";
 import { useState, useEffect } from "react";
 
 // Form Schema
@@ -56,6 +56,8 @@ export default function ExchangeConnectPage() {
   const [selectedMarketType, setSelectedMarketType] = useState<string>("");
   const [selectedExchangeId, setSelectedExchangeId] = useState<string>("");
   const [selectedExchange, setSelectedExchange] = useState<Exchange | null>(null);
+  const [connectionStatus, setConnectionStatus] = useState<'not_tested' | 'testing' | 'success' | 'failed'>('not_tested');
+  const [testError, setTestError] = useState<string | null>(null);
 
   // Fetch all exchanges
   const { data: exchanges, isLoading: exchangesLoading } = useQuery<Exchange[]>({
@@ -92,6 +94,31 @@ export default function ExchangeConnectPage() {
       toast({
         title: "Connection failed",
         description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+  
+  // Test connection mutation
+  const testConnectionMutation = useMutation({
+    mutationFn: async (data: ConnectionTest) => {
+      const res = await apiRequest("POST", "/api/test-connection", data);
+      return await res.json();
+    },
+    onSuccess: () => {
+      setConnectionStatus('success');
+      setTestError(null);
+      toast({
+        title: "Connection test successful",
+        description: "Your credentials were verified successfully",
+      });
+    },
+    onError: (error: any) => {
+      setConnectionStatus('failed');
+      setTestError(error.message || "Connection test failed");
+      toast({
+        title: "Connection test failed",
+        description: error.message || "Failed to verify your credentials",
         variant: "destructive",
       });
     },
@@ -133,7 +160,8 @@ export default function ExchangeConnectPage() {
     }
   }, [selectedExchangeId, exchanges, form]);
 
-  function onSubmit(data: FormValues) {
+  // Helper function to prepare connection data
+  function prepareConnectionData(data: FormValues): { credentials: Record<string, string>, connectionData: ConnectionRequest } {
     // Prepare credentials object based on auth method
     let credentials = {};
     
@@ -152,14 +180,47 @@ export default function ExchangeConnectPage() {
     }
 
     // Create connection request
-    const connectionRequest: ConnectionRequest = {
+    const connectionData: ConnectionRequest = {
       exchangeId: parseInt(data.exchangeId),
       brokerId: data.brokerId ? parseInt(data.brokerId) : undefined,
       authMethod: data.authMethod,
       credentials,
     };
 
-    connectionMutation.mutate(connectionRequest);
+    return { credentials, connectionData };
+  }
+
+  function testConnection() {
+    const formData = form.getValues();
+    const isValid = form.trigger();
+    
+    if (!isValid) {
+      toast({
+        title: "Validation Error",
+        description: "Please fill in all required fields correctly",
+        variant: "destructive",
+      });
+      return;
+    }
+    
+    const { connectionData } = prepareConnectionData(formData);
+    setConnectionStatus('testing');
+    testConnectionMutation.mutate(connectionData as ConnectionTest);
+  }
+
+  function onSubmit(data: FormValues) {
+    // Don't submit if test failed or not tested yet
+    if (connectionStatus === 'failed' || connectionStatus === 'not_tested') {
+      toast({
+        title: "Test connection first",
+        description: "Please test your connection credentials before saving",
+        variant: "destructive",
+      });
+      return;
+    }
+    
+    const { connectionData } = prepareConnectionData(data);
+    connectionMutation.mutate(connectionData);
   }
 
   return (
@@ -176,9 +237,36 @@ export default function ExchangeConnectPage() {
               <div className="my-4 border border-neutral-200 rounded-md p-4 bg-neutral-50">
                 <h4 className="text-sm font-medium text-neutral-900 mb-2">Connection Status</h4>
                 <div className="flex items-center text-sm text-neutral-700">
-                  <span className="h-3 w-3 bg-neutral-300 rounded-full mr-2"></span>
-                  <span>Not connected</span>
+                  {connectionStatus === 'not_tested' && (
+                    <>
+                      <span className="h-3 w-3 bg-neutral-300 rounded-full mr-2"></span>
+                      <span>Not tested</span>
+                    </>
+                  )}
+                  {connectionStatus === 'testing' && (
+                    <>
+                      <span className="h-3 w-3 bg-blue-500 rounded-full mr-2 animate-pulse"></span>
+                      <span>Testing connection...</span>
+                    </>
+                  )}
+                  {connectionStatus === 'success' && (
+                    <>
+                      <CheckCircle2Icon className="h-4 w-4 text-green-500 mr-2" />
+                      <span className="text-green-600">Connection verified</span>
+                    </>
+                  )}
+                  {connectionStatus === 'failed' && (
+                    <>
+                      <XCircleIcon className="h-4 w-4 text-red-500 mr-2" />
+                      <span className="text-red-600">Connection failed</span>
+                    </>
+                  )}
                 </div>
+                {connectionStatus === 'failed' && testError && (
+                  <div className="mt-2 text-xs text-red-500">
+                    {testError}
+                  </div>
+                )}
               </div>
               
               <div className="space-y-4 mt-6">
@@ -478,13 +566,25 @@ export default function ExchangeConnectPage() {
                       )}
                     </div>
 
-                    <Button 
-                      type="submit" 
-                      className="w-full" 
-                      disabled={connectionMutation.isPending}
-                    >
-                      {connectionMutation.isPending ? "Connecting..." : "Connect"}
-                    </Button>
+                    <div className="flex space-x-4">
+                      <Button 
+                        type="button" 
+                        variant="outline"
+                        className="flex-1" 
+                        onClick={testConnection}
+                        disabled={testConnectionMutation.isPending}
+                      >
+                        {testConnectionMutation.isPending ? "Testing..." : "Test Connection"}
+                      </Button>
+                      
+                      <Button 
+                        type="submit" 
+                        className="flex-1" 
+                        disabled={connectionMutation.isPending || connectionStatus !== 'success'}
+                      >
+                        {connectionMutation.isPending ? "Connecting..." : "Connect"}
+                      </Button>
+                    </div>
                   </form>
                 </Form>
               </div>

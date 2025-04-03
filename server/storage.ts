@@ -6,6 +6,7 @@ import session from "express-session";
 import createMemoryStore from "memorystore";
 
 const MemoryStore = createMemoryStore(session);
+type SessionStore = ReturnType<typeof createMemoryStore>;
 
 // Define the storage interface
 export interface IStorage {
@@ -30,7 +31,7 @@ export interface IStorage {
   updateConnection(id: number, connection: Partial<Connection>): Promise<Connection | undefined>;
   deleteConnection(id: number): Promise<void>;
   
-  sessionStore: session.SessionStore;
+  sessionStore: SessionStore;
 }
 
 // Implement the in-memory storage
@@ -39,7 +40,7 @@ export class MemStorage implements IStorage {
   private exchanges: Map<number, Exchange>;
   private brokers: Map<number, Broker>;
   private connections: Map<number, Connection>;
-  sessionStore: session.SessionStore;
+  sessionStore: SessionStore;
   
   private userIdCounter: number;
   private exchangeIdCounter: number;
@@ -186,6 +187,8 @@ export class MemStorage implements IStorage {
       { name: 'NYSE', type: 'spot', marketType: 'equity', requiresBroker: true },
       { name: 'NASDAQ', type: 'spot', marketType: 'equity', requiresBroker: true },
       { name: 'LSE', type: 'spot', marketType: 'equity', requiresBroker: true },
+      { name: 'PSX', type: 'spot', marketType: 'equity', requiresBroker: true }, // Pakistan Stock Exchange
+      { name: 'NSE', type: 'spot', marketType: 'equity', requiresBroker: true }, // National Stock Exchange of India
     ];
     
     const forexExchanges = [
@@ -205,26 +208,40 @@ export class MemStorage implements IStorage {
 
     // Sample Brokers
     const equityBrokers = [
-      { name: 'Interactive Brokers', exchangeId: 5, authMethods: ['api', 'credentials'] },
-      { name: 'TD Ameritrade', exchangeId: 5, authMethods: ['api', 'credentials'] },
-      { name: 'Charles Schwab', exchangeId: 5, authMethods: ['credentials'] },
-      { name: 'Robinhood', exchangeId: 5, authMethods: ['api'] },
+      // NYSE brokers (exchangeId: 1)
+      { name: 'Interactive Brokers', exchangeId: 1, authMethods: ['api', 'credentials'] },
+      { name: 'TD Ameritrade', exchangeId: 1, authMethods: ['api', 'credentials'] },
+      { name: 'Charles Schwab', exchangeId: 1, authMethods: ['credentials'] },
+      { name: 'Robinhood', exchangeId: 1, authMethods: ['api'] },
       
-      { name: 'Interactive Brokers', exchangeId: 6, authMethods: ['api', 'credentials'] },
-      { name: 'TD Ameritrade', exchangeId: 6, authMethods: ['api', 'credentials'] },
-      { name: 'Charles Schwab', exchangeId: 6, authMethods: ['credentials'] },
-      { name: 'Robinhood', exchangeId: 6, authMethods: ['api'] },
+      // NASDAQ brokers (exchangeId: 2)
+      { name: 'Interactive Brokers', exchangeId: 2, authMethods: ['api', 'credentials'] },
+      { name: 'TD Ameritrade', exchangeId: 2, authMethods: ['api', 'credentials'] },
+      { name: 'Charles Schwab', exchangeId: 2, authMethods: ['credentials'] },
+      { name: 'Robinhood', exchangeId: 2, authMethods: ['api'] },
       
-      { name: 'Interactive Brokers', exchangeId: 7, authMethods: ['api', 'credentials'] },
-      { name: 'Hargreaves Lansdown', exchangeId: 7, authMethods: ['credentials'] },
+      // LSE brokers (exchangeId: 3)
+      { name: 'Interactive Brokers', exchangeId: 3, authMethods: ['api', 'credentials'] },
+      { name: 'Hargreaves Lansdown', exchangeId: 3, authMethods: ['credentials'] },
+      
+      // PSX brokers (exchangeId: 4)
+      { name: 'AKD', exchangeId: 4, authMethods: ['credentials'] },
+      { name: 'MKK', exchangeId: 4, authMethods: ['credentials'] },
+      
+      // NSE brokers (exchangeId: 5)
+      { name: 'Zerodha', exchangeId: 5, authMethods: ['api', 'credentials'] },
+      { name: 'ICICI Direct', exchangeId: 5, authMethods: ['credentials'] },
+      { name: 'Angel Broking', exchangeId: 5, authMethods: ['api', 'credentials'] },
     ];
     
     const commodityBrokers = [
-      { name: 'Interactive Brokers', exchangeId: 10, authMethods: ['api', 'credentials'] },
-      { name: 'TD Ameritrade', exchangeId: 10, authMethods: ['api', 'credentials'] },
+      // CME Group (exchangeId: 8)
+      { name: 'Interactive Brokers', exchangeId: 8, authMethods: ['api', 'credentials'] },
+      { name: 'TD Ameritrade', exchangeId: 8, authMethods: ['api', 'credentials'] },
       
-      { name: 'Interactive Brokers', exchangeId: 11, authMethods: ['api', 'credentials'] },
-      { name: 'ADMIS', exchangeId: 11, authMethods: ['credentials'] },
+      // ICE (exchangeId: 9)
+      { name: 'Interactive Brokers', exchangeId: 9, authMethods: ['api', 'credentials'] },
+      { name: 'ADMIS', exchangeId: 9, authMethods: ['credentials'] },
     ];
 
     // Create brokers
