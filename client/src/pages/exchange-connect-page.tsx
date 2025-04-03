@@ -72,7 +72,11 @@ export default function ExchangeConnectPage() {
 
   // Fetch brokers for the selected exchange
   const { data: brokers, isLoading: brokersLoading } = useQuery<Broker[]>({
-    queryKey: [`/api/brokers/${selectedExchangeId}`],
+    queryKey: ["/api/brokers", selectedExchangeId],
+    queryFn: () => fetch(`/api/brokers/${selectedExchangeId}`).then(res => {
+      if (!res.ok) throw new Error('Failed to load brokers');
+      return res.json();
+    }),
     enabled: !!selectedExchangeId,
   });
 
@@ -182,7 +186,7 @@ export default function ExchangeConnectPage() {
     // Create connection request
     const connectionData: ConnectionRequest = {
       exchangeId: parseInt(data.exchangeId),
-      brokerId: data.brokerId ? parseInt(data.brokerId) : undefined,
+      brokerId: data.brokerId && data.brokerId !== "direct_connection" ? parseInt(data.brokerId) : undefined,
       authMethod: data.authMethod,
       credentials,
     };
@@ -391,7 +395,7 @@ export default function ExchangeConnectPage() {
                               </FormControl>
                               <SelectContent>
                                 {!selectedExchange.requiresBroker && (
-                                  <SelectItem value="">None (Direct Connection)</SelectItem>
+                                  <SelectItem value="direct_connection">None (Direct Connection)</SelectItem>
                                 )}
                                 {brokers?.map((broker) => (
                                   <SelectItem key={broker.id} value={broker.id.toString()}>
