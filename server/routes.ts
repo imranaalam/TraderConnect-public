@@ -2,7 +2,7 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { setupAuth } from "./auth";
-import { connectionRequestSchema, connectionTestSchema, ConnectionTest } from "@shared/schema";
+import { connectionRequestSchema, connectionTestSchema, ConnectionTest, Connection } from "@shared/schema";
 import { z } from "zod";
 import { scrypt, createHash } from 'crypto';
 import { promisify } from 'util';
@@ -239,6 +239,50 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       await storage.deleteConnection(id);
       res.sendStatus(204);
+    } catch (error) {
+      next(error);
+    }
+  });
+  
+  // Update connection endpoint
+  app.patch("/api/connections/:id", async (req, res, next) => {
+    if (!req.isAuthenticated()) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
+
+    try {
+      const id = parseInt(req.params.id);
+      const connection = await storage.getConnection(id);
+      
+      // Check if connection belongs to current user
+      if (!connection || connection.userId !== req.user!.id) {
+        return res.status(404).json({ message: "Connection not found" });
+      }
+      
+      // Update only allowed fields
+      const updates: Partial<Connection> = {};
+      
+      if (req.body.credentials) {
+        updates.credentials = req.body.credentials;
+      }
+      
+      if (req.body.accountId !== undefined) {
+        updates.accountId = req.body.accountId;
+      }
+      
+      if (req.body.isActive !== undefined) {
+        updates.isActive = req.body.isActive;
+      }
+      
+      const updatedConnection = await storage.updateConnection(id, updates);
+      
+      // Update lastConnected timestamp if credentials were changed
+      if (req.body.credentials) {
+        const timestamp = new Date().toISOString();
+        await storage.updateConnection(id, { lastConnected: timestamp });
+      }
+      
+      res.status(200).json(updatedConnection);
     } catch (error) {
       next(error);
     }

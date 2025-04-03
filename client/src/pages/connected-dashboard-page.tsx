@@ -8,16 +8,32 @@ import { useToast } from "@/hooks/use-toast";
 import { Connection, Exchange, Broker } from "@shared/schema";
 import { format } from "date-fns";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { ArrowRightIcon } from "lucide-react";
+import { ArrowRightIcon, Edit, Key } from "lucide-react";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { useState } from "react";
+import { Label } from "@/components/ui/label";
+import { Input } from "@/components/ui/input";
 
 export default function ConnectedDashboardPage() {
   const { id } = useParams();
   const { toast } = useToast();
   const [_, setLocation] = useLocation();
+  const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
+  const [credentials, setCredentials] = useState<Record<string, string>>({});
   
   // Fetch connection details
   const { data: connection, isLoading: connectionLoading } = useQuery<Connection>({
     queryKey: ["/api/connections", id],
+    queryFn: async () => {
+      const res = await fetch(`/api/connections/${id}`);
+      if (!res.ok) throw new Error("Failed to fetch connection");
+      const data = await res.json();
+      // Initialize the credentials state from the connection data
+      if (data?.credentials) {
+        setCredentials(data.credentials as Record<string, string>);
+      }
+      return data;
+    }
   });
 
   // Fetch all exchanges
@@ -53,7 +69,45 @@ export default function ConnectedDashboardPage() {
     },
   });
 
+  // Update credentials mutation
+  const updateCredentialsMutation = useMutation({
+    mutationFn: async (updatedCredentials: Record<string, string>) => {
+      const res = await apiRequest("PATCH", `/api/connections/${id}`, {
+        credentials: updatedCredentials
+      });
+      return await res.json();
+    },
+    onSuccess: () => {
+      toast({
+        title: "Credentials updated",
+        description: "Your connection credentials have been updated successfully",
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/connections", id] });
+      setIsEditDialogOpen(false);
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Update failed",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
   const isLoading = connectionLoading || exchangesLoading || brokersLoading;
+
+  // Helper function to handle input changes
+  const handleCredentialChange = (key: string, value: string) => {
+    setCredentials(prev => ({
+      ...prev,
+      [key]: value
+    }));
+  };
+
+  // Handle submit for credential updates
+  const handleUpdateCredentials = () => {
+    updateCredentialsMutation.mutate(credentials);
+  };
 
   if (isLoading) {
     return (
@@ -107,6 +161,33 @@ export default function ConnectedDashboardPage() {
   const exchange = exchanges?.find(e => e.id === connection.exchangeId);
   const broker = connection.brokerId ? brokers?.find(b => b.id === connection.brokerId) : undefined;
 
+  // Determine which credential fields to show based on auth method and broker
+  const getCredentialFields = () => {
+    const fields = [];
+    if (connection.authMethod === "api") {
+      fields.push({ name: "apiKey", label: "API Key" });
+      fields.push({ name: "apiSecret", label: "API Secret" });
+    } else {
+      if (broker?.name === "AKD") {
+        fields.push({ name: "username", label: "Username" });
+        fields.push({ name: "password", label: "Password" });
+        fields.push({ name: "pin", label: "PIN Code" });
+      } else if (broker?.name === "MKK") {
+        fields.push({ name: "accountId", label: "Account ID" });
+        fields.push({ name: "password", label: "Password" });
+      } else if (broker?.name === "Zerodha") {
+        fields.push({ name: "userId", label: "User ID" });
+        fields.push({ name: "password", label: "Password" });
+        fields.push({ name: "pin", label: "PIN" });
+      } else {
+        // Generic credential fields
+        fields.push({ name: "username", label: "Username/ID" });
+        fields.push({ name: "password", label: "Password" });
+      }
+    }
+    return fields;
+  };
+
   return (
     <div className="mt-10">
       <div className="bg-white shadow overflow-hidden sm:rounded-lg">
@@ -114,7 +195,7 @@ export default function ConnectedDashboardPage() {
           <div>
             <h3 className="text-lg leading-6 font-medium text-neutral-900">Connected Account</h3>
             <p className="mt-1 max-w-2xl text-sm text-neutral-500">
-              {exchange?.name} - {exchange?.marketType.charAt(0).toUpperCase() + exchange?.marketType.slice(1)} Exchange
+              {exchange?.name || "NaN"} Exchange
             </p>
           </div>
           <div className="flex items-center">
@@ -133,19 +214,22 @@ export default function ConnectedDashboardPage() {
             <div className="py-4 sm:py-5 sm:grid sm:grid-cols-3 sm:gap-4 sm:px-6">
               <dt className="text-sm font-medium text-neutral-500">Account ID</dt>
               <dd className="mt-1 text-sm text-neutral-900 sm:mt-0 sm:col-span-2">
-                {connection.accountId || "Not specified"}
+                {connection.accountId || 
+                 (connection.credentials && (connection.credentials as any).username) || 
+                 (connection.credentials && (connection.credentials as any).userId) || 
+                 "Not specified"}
               </dd>
             </div>
             <div className="py-4 sm:py-5 sm:grid sm:grid-cols-3 sm:gap-4 sm:px-6">
               <dt className="text-sm font-medium text-neutral-500">Exchange Type</dt>
               <dd className="mt-1 text-sm text-neutral-900 sm:mt-0 sm:col-span-2 capitalize">
-                {exchange?.type}
+                {exchange?.type || "N/A"}
               </dd>
             </div>
             <div className="py-4 sm:py-5 sm:grid sm:grid-cols-3 sm:gap-4 sm:px-6">
               <dt className="text-sm font-medium text-neutral-500">Market Type</dt>
               <dd className="mt-1 text-sm text-neutral-900 sm:mt-0 sm:col-span-2 capitalize">
-                {exchange?.marketType}
+                {exchange?.marketType || "N/A"}
               </dd>
             </div>
             <div className="py-4 sm:py-5 sm:grid sm:grid-cols-3 sm:gap-4 sm:px-6">
@@ -157,7 +241,7 @@ export default function ConnectedDashboardPage() {
             <div className="py-4 sm:py-5 sm:grid sm:grid-cols-3 sm:gap-4 sm:px-6">
               <dt className="text-sm font-medium text-neutral-500">Connection Status</dt>
               <dd className="mt-1 text-sm text-neutral-900 sm:mt-0 sm:col-span-2">
-                <Badge variant="success" className="bg-green-100 text-green-800 hover:bg-green-100">
+                <Badge variant="outline" className="bg-green-100 text-green-800 hover:bg-green-100">
                   Active
                 </Badge>
               </dd>
@@ -168,6 +252,16 @@ export default function ConnectedDashboardPage() {
                 {connection.lastConnected 
                   ? format(new Date(connection.lastConnected), "PPpp")
                   : "Never"}
+              </dd>
+            </div>
+            <div className="py-4 sm:py-5 sm:grid sm:grid-cols-3 sm:gap-4 sm:px-6">
+              <dt className="text-sm font-medium text-neutral-500">Credentials</dt>
+              <dd className="mt-1 text-sm text-neutral-900 sm:mt-0 sm:col-span-2 flex items-center">
+                <span className="mr-3">••••••••••</span>
+                <Button size="sm" variant="outline" onClick={() => setIsEditDialogOpen(true)}>
+                  <Edit className="h-4 w-4 mr-2" />
+                  Edit Credentials
+                </Button>
               </dd>
             </div>
           </dl>
@@ -185,6 +279,51 @@ export default function ConnectedDashboardPage() {
           </Button>
         </div>
       </div>
+
+      {/* Edit Credentials Dialog */}
+      <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Edit Connection Credentials</DialogTitle>
+            <DialogDescription>
+              Update your connection credentials for {exchange?.name}
+              {broker ? ` via ${broker.name}` : ""}.
+            </DialogDescription>
+          </DialogHeader>
+          
+          <div className="space-y-4 py-4">
+            {getCredentialFields().map((field) => (
+              <div className="grid grid-cols-4 items-center gap-4" key={field.name}>
+                <Label htmlFor={field.name} className="text-right">
+                  {field.label}
+                </Label>
+                <Input
+                  id={field.name}
+                  type={field.name.includes("password") || field.name.includes("secret") || field.name.includes("pin") ? "password" : "text"}
+                  className="col-span-3"
+                  value={(credentials as any)[field.name] || ""}
+                  onChange={(e) => handleCredentialChange(field.name, e.target.value)}
+                />
+              </div>
+            ))}
+          </div>
+          
+          <DialogFooter>
+            <Button 
+              variant="outline" 
+              onClick={() => setIsEditDialogOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button 
+              onClick={handleUpdateCredentials}
+              disabled={updateCredentialsMutation.isPending}
+            >
+              {updateCredentialsMutation.isPending ? "Saving..." : "Save Changes"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
