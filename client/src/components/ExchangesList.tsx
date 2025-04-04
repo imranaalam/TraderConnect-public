@@ -6,7 +6,7 @@ import { Button } from "./ui/button";
 import { Link } from "wouter";
 import { useEffect, useState } from "react";
 
-export default function ExchangesList({ showAllExchanges = false }) {
+export default function ExchangesList({ showAllExchanges = true }) {
   const { data: exchanges } = useQuery<Exchange[]>({
     queryKey: ["/api/exchanges"],
   });

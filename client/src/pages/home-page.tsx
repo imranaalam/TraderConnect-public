@@ -9,7 +9,7 @@ import { useState } from "react";
 
 export default function HomePage() {
   const { isAuthenticated } = useAuth();
-  const [showAllExchanges, setShowAllExchanges] = useState(false);
+  const [showAllExchanges, setShowAllExchanges] = useState(true);
 
   if (!isAuthenticated) {
     return (
