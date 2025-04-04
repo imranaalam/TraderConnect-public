@@ -1,7 +1,8 @@
 // akdApiClient.ts
-import * as soap from 'soap';
-import * as zlib from 'zlib';
-import { promisify } from 'util';
+import * as soap from "soap";
+import * as zlib from "zlib";
+import { promisify } from "util";
+import { Buffer } from "buffer"; // Ensure Buffer is explicitly imported
 
 // Promisify zlib functions for async/await usage
 const gunzipAsync = promisify(zlib.gunzip);
@@ -9,814 +10,1378 @@ const gunzipAsync = promisify(zlib.gunzip);
 // ============================
 // Configuration (Use Environment Variables ideally)
 // ============================
-const WSDL_URL = process.env.AKD_WSDL_URL || "http://online.akdtrade.biz/TradeCastService/LoginServerService?wsdl";
-// const WSDL_URL = "http://online2.maksltrade.biz/TradeCastService/LoginServerService?wsdl"; // Alternative
+const WSDL_URL =
+    process.env.AKD_WSDL_URL ||
+    "http://online.akdtrade.biz/TradeCastService/LoginServerService?wsdl";
 
-// Use fixed dates based on the example JSON for consistency during development/testing
-const COMMON_START_DATE = "Mar 01, 2025";
-const COMMON_END_DATE = "Mar 12, 2025";
+// --- SERVICE Credentials (For HTTP Basic Auth - like Python's myservice/12345678) ---
+const SERVICE_USERNAME = process.env.AKD_SERVICE_USER || "myservice";
+const SERVICE_PASSWORD = process.env.AKD_SERVICE_PASSWORD || "12345678";
+// --- End SERVICE Credentials ---
 
-// Default values/placeholders mirroring Python script's assumptions
-const DEFAULT_TRADING_ACCOUNT_STATUS = "Active";
-const DEFAULT_TRADING_ACCOUNT_TYPE_CASH = "Cash";
-const DEFAULT_TRADING_ACCOUNT_TYPE_MARGIN = "Margin";
-const DEFAULT_ORDER_TYPE = "Limit";
-const DEFAULT_MARGIN_CALL_LEVEL = "70%";
-const DEFAULT_CURRENT_MARGIN_USAGE = "23.4%";
-const DEFAULT_ACCOUNT_FALLBACK = "COAF3906"; // Fallback if TradAccounts fails
+const COMMON_START_DATE = "Mar 01, 2025"; // From example
+const COMMON_END_DATE = "Mar 12, 2025"; // From example
+const DEFAULT_ACCOUNT_FALLBACK = "AUTH_FAILED"; // Specific marker for auth failure
 
 // ============================
-// Key Mappings for API Responses 
+// Key Mappings for API Responses (Aligned with Python)
 // ============================
 const KEY_MAPPINGS: Record<string, string[]> = {
-    "TradAccounts": [
-        'AccountCode', 'AccountTitle', 'BranchCode', 'TraderCode', 'AccountStatus', 'NIC'
+    TradAccounts: [
+        "AccountCode",
+        "AccountTitle",
+        "BranchCode",
+        "TraderCode",
+        "AccountStatus",
+        "NIC",
     ],
-    "GetOrderHistory": [
-        'Symbol', 'Quantity', 'Rate', 'Amount', 'Side', 'OrderType', 'OrderDate', 'TradeDate', 'Reference'
+    GetOrderHistory: [
+        "Symbol",
+        "Quantity",
+        "Rate",
+        "Amount",
+        "Side",
+        "OrderType",
+        "OrderDate",
+        "TradeDate",
+        "Reference",
     ],
-    "GetAccountStatement": [
-        'VoucherNo', 'UnknownCol2', 'Date', 'Description', 'Debit', 'Credit', 'Balance'
+    GetAccountStatement: [
+        "VoucherNo",
+        "UnknownCol2",
+        "Date",
+        "Description",
+        "Debit",
+        "Credit",
+        "Balance",
     ],
-    "GetCollateral": [
-        'Symbol', 'Quantity', 'TotalQty', 'AvgBuyRate', 'SoldQuantity', 'AvgSellRate', 'MTM_Rate', 
-        'MTMAmount', 'HaircutPercent', 'MarginizedValueRate', 'ValueAfterHaircut', 'PendingSellQty', 
-        'SettledPL', 'UnsettledPL'
-    ]
+    GetCollateral: [
+        "Symbol",
+        "Quantity",
+        "TotalQty",
+        "AvgBuyRate",
+        "SoldQuantity",
+        "AvgSellRate",
+        "MTM_Rate",
+        "MTMAmount",
+        "HaircutPercent",
+        "MarginizedValueRate",
+        "ValueAfterHaircut",
+        "PendingSellQty",
+        "SettledPL",
+        "UnsettledPL",
+    ],
+    // GetExposureDynamic uses a special parser, no direct mapping here
 };
 
 // ============================
-// Helper Functions
+// Helper Functions (FIXED processAndUnzipResponse & Enhanced Logging)
 // ============================
 
 /**
  * Processes the raw SOAP response, handling potential Buffers, Gzip, and Base64.
- * Mimics Python's process_response and unzip_string_from_bytes_custom.
+ * FIXED: Only Base64 decode if it looks like Base64 and only Gzip if magic number matches.
  */
-async function processAndUnzipResponse(resp: any): Promise<string | null> {
+async function processAndUnzipResponse(
+    apiMethod: string,
+    rawSoapResult: any,
+): Promise<string | null> {
+    console.log(
+        `[${apiMethod}] processAndUnzipResponse received rawSoapResult:`,
+        JSON.stringify(rawSoapResult, null, 2),
+    );
+
+    // Attempt to extract the core response data
+    let resp =
+        rawSoapResult?.[0]?.return ??
+        rawSoapResult?.[0]?.[`${apiMethod}Result`] ??
+        rawSoapResult?.[0] ??
+        rawSoapResult;
+
+    if (resp && typeof resp === "object" && resp.return) {
+        resp = resp.return;
+    }
+
+    console.log(`[${apiMethod}] Extracted response part for processing:`, resp);
+
     if (resp === null || resp === undefined) {
+        console.log(
+            `[${apiMethod}] Extracted response part is null or undefined.`,
+        );
         return null;
     }
 
-    let bufferToDecompress: Buffer | undefined;
-
     try {
         if (Buffer.isBuffer(resp)) {
-            // Check for Gzip magic number
+            console.log(`[${apiMethod}] Response is a Buffer.`);
             if (resp[0] === 0x1f && resp[1] === 0x8b) {
-                bufferToDecompress = resp;
+                // Gzip magic number
+                console.log(
+                    `[${apiMethod}] Buffer is Gzipped. Decompressing...`,
+                );
+                const decompressed = await gunzipAsync(resp);
+                const decodedString = decompressed.toString("utf-8");
+                console.log(
+                    `[${apiMethod}] Decompressed string (from Buffer):`,
+                    decodedString,
+                );
+                return decodedString;
             } else {
-                // If it's a buffer but not gzipped, try decoding as UTF-8
-                return resp.toString('utf-8');
+                console.log(
+                    `[${apiMethod}] Buffer is not Gzipped. Decoding as UTF-8...`,
+                );
+                const decodedString = resp.toString("utf-8");
+                console.log(
+                    `[${apiMethod}] Decoded string (from Buffer):`,
+                    decodedString,
+                );
+                return decodedString;
             }
-        } else if (typeof resp === 'string') {
-            // Assume Base64 encoded Gzipped data if it's a string
-            const decodedBuffer = Buffer.from(resp, 'base64');
-            // Check magic number after decoding
-            if (decodedBuffer[0] === 0x1f && decodedBuffer[1] === 0x8b) {
-                bufferToDecompress = decodedBuffer;
-            } else {
-                 // If not gzipped after base64 decode, return the original string? Or decoded?
-                 // Let's return the decoded buffer as string for consistency.
-                 return decodedBuffer.toString('utf-8');
-            }
-        } else {
-            // If it's neither Buffer nor string, return as is (might be simple type like bool)
-            return String(resp);
-        }
+        } else if (typeof resp === "string") {
+            console.log(`[${apiMethod}] Response is a string.`);
 
-        // Decompress if we identified gzipped data
-        if (bufferToDecompress) {
-            const decompressed = await gunzipAsync(bufferToDecompress);
-            return decompressed.toString('utf-8');
+            // --- START FIX ---
+            // Heuristic: Does it look like Base64?
+            const likelyBase64 =
+                /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(
+                    resp,
+                ) && resp.length > 20; // More strict Base64 check
+
+            if (likelyBase64) {
+                console.log(
+                    `[${apiMethod}] String looks like Base64. Attempting decode...`,
+                );
+                try {
+                    const decodedBuffer = Buffer.from(resp, "base64");
+                    console.log(
+                        `[${apiMethod}] Base64 decode successful. Checking for Gzip...`,
+                    );
+                    if (
+                        decodedBuffer[0] === 0x1f &&
+                        decodedBuffer[1] === 0x8b
+                    ) {
+                        console.log(
+                            `[${apiMethod}] Decoded buffer is Gzipped. Decompressing...`,
+                        );
+                        const decompressed = await gunzipAsync(decodedBuffer);
+                        const decodedString = decompressed.toString("utf-8");
+                        console.log(
+                            `[${apiMethod}] Decompressed string (from Base64->Gzip):`,
+                            decodedString,
+                        );
+                        return decodedString;
+                    } else {
+                        console.log(
+                            `[${apiMethod}] Decoded buffer is not Gzipped. Returning decoded string...`,
+                        );
+                        const decodedString = decodedBuffer.toString("utf-8");
+                        console.log(
+                            `[${apiMethod}] Decoded (but not Gzipped) string:`,
+                            decodedString,
+                        );
+                        // Check if the decoded string is likely the intended result (e.g., "Not Authorized") or still garbled
+                        if (
+                            decodedString.includes(";") ||
+                            decodedString.includes("|") ||
+                            decodedString.toLowerCase() === "not authorized"
+                        ) {
+                            return decodedString;
+                        } else if (decodedString.includes("\uFFFD")) {
+                            // Check for Unicode replacement character (often indicates decoding issues)
+                            console.warn(
+                                `[${apiMethod}] Base64 decoded string contains replacement characters. Reverting to original string.`,
+                            );
+                            return resp;
+                        } else {
+                            // Decoded but doesn't look like expected data or known error, cautiously return original.
+                            console.warn(
+                                `[${apiMethod}] Base64 decoded string doesn't look like pipe/semicolon data or known error. Reverting to original string.`,
+                            );
+                            return resp;
+                        }
+                    }
+                } catch (base64Error) {
+                    console.log(
+                        `[${apiMethod}] Base64 decode failed. Assuming plain string.`,
+                    );
+                    return resp;
+                }
+            } else {
+                console.log(
+                    `[${apiMethod}] String does not look like Base64. Treating as plain text.`,
+                );
+                return resp;
+            }
+            // --- END FIX ---
+        } else {
+            console.log(
+                `[${apiMethod}] Response is neither Buffer nor string. Converting to string...`,
+            );
+            const stringified = String(resp);
+            console.log(`[${apiMethod}] Stringified response:`, stringified);
+            return stringified;
         }
     } catch (error: any) {
-        console.error(`Error during response processing/decompression: ${error.message}`);
-        // Try returning the raw input as a string in case of error
+        console.error(
+            `[${apiMethod}] Error during response processing/decompression: ${error.message}. Raw resp part: ${resp}`,
+        );
         return String(resp);
     }
-     // Should not reach here normally, but return raw if logic fails
-    return String(resp);
 }
 
-/**
- * Cleans a string to be a more suitable key for structured data.
- */
-function cleanKey(keyStr: string): string {
-    if (!keyStr) {
-        return "Unnamed_Key";
-    }
-    // Remove potentially problematic characters, replace spaces with underscores
-    // Allow word chars, hyphen, space
-    const cleaned = keyStr.replace(/[^\w\- ]/g, '').trim();
-    // Replace spaces with underscores
-    const finalKey = cleaned.replace(/\s+/g, '_');
-    
-    // Handle cases where key might become empty after cleaning
-    return finalKey || "Invalid_Key";
+/** Cleans a string for use as a JSON key */
+function cleanKey(keyStr: string | null | undefined): string {
+    if (!keyStr) return "Unnamed_Key";
+    const cleaned = keyStr.replace(/[^\w\- ]/g, "").trim(); // Allow word chars, hyphen, space
+    const finalKey = cleaned.replace(/\s+/g, "_"); // Replace spaces/tabs etc. with underscore
+    return finalKey || "Invalid_Key"; // Handle cases where key becomes empty
 }
 
-/**
- * Parses a response string into a structured array of objects.
- * Follows the Python code's approach for handling API responses.
- */
-function parseResponseToStructure(responseStr: string | null, keyMapping?: string[]): any[] {
+/** Parses pipe/semicolon delimited string to structured array */
+function parseResponseToStructure(
+    apiMethod: string,
+    responseStr: string | null,
+    keyMapping?: string[],
+): Record<string, any>[] {
+    console.log(
+        `[${apiMethod}] parseResponseToStructure received string:`,
+        responseStr ? `"${responseStr.substring(0, 150)}..."` : "null",
+    ); // Log more context
     if (!responseStr || !responseStr.trim()) {
+        console.log(`[${apiMethod}] Input string is null or empty.`);
         return [];
     }
-    
     const lowerStripped = responseStr.trim().toLowerCase();
-    if (lowerStripped.includes("no record") || lowerStripped.includes("no data")) {
-        return [];
+    // Check for known "no data" or error strings
+    if (
+        lowerStripped.includes("no record") ||
+        lowerStripped.includes("no data") ||
+        lowerStripped === "not authorized"
+    ) {
+        console.log(
+            `[${apiMethod}] Detected 'no data' or 'not authorized' in response string.`,
+        );
+        if (lowerStripped === "not authorized" && keyMapping) {
+            const errorObj: Record<string, any> = {};
+            errorObj[keyMapping[0] || "Error"] = "Not Authorized";
+            for (let i = 1; i < keyMapping.length; i++) {
+                errorObj[keyMapping[i]] = null;
+            }
+            console.log(
+                `[${apiMethod}] Returning structured auth error object.`,
+            );
+            return [errorObj];
+        }
+        return []; // Return empty for general "no data"
     }
-    
+
     try {
-        const rows = responseStr.trim().split("|").map(r => r.trim()).filter(r => r);
+        const rows = responseStr
+            .trim()
+            .split("|")
+            .map((r) => r.trim())
+            .filter((r) => r);
         if (!rows.length) {
+            console.log(
+                `[${apiMethod}] No rows after splitting response by '|'.`,
+            );
             return [];
         }
-        
-        let headersToUse = keyMapping;
-        let dataRowsStr = rows; // Assume all rows are data if mapping is provided
-        
+        console.log(`[${apiMethod}] Found ${rows.length} rows.`);
+
+        let headersToUse: string[] | undefined = keyMapping;
+        let dataRowsStr: string[] = rows;
+
         // --- Header Logic ---
         if (!headersToUse) {
-            if (rows.length > 1) {
-                // Try parsing first row as headers
-                const possibleHeaders = rows[0].split(";").map(h => cleanKey(h.trim()));
-                
-                // Check if headers look like data (e.g., all numbers)
-                const isLikelyHeader = possibleHeaders.some(h => /[a-zA-Z]/.test(h));
-                
-                if (isLikelyHeader) {
-                    headersToUse = possibleHeaders;
-                    dataRowsStr = rows.slice(1); // Skip first row (headers)
-                    
-                    // Handle duplicate headers
+            console.log(
+                `[${apiMethod}] No key mapping provided. Attempting to parse headers from first row...`,
+            );
+            if (rows.length >= 1) {
+                // Check if there's at least one row to parse headers from
+                const firstRowCols = rows[0].split(";");
+                // Refined Header Check: Does the first column of the *second* row look different from the first column of the *first* row?
+                // This helps differentiate actual headers from single-row data or multi-row data without headers.
+                let hasHeaderRow = false;
+                if (rows.length > 1) {
+                    const secondRowCols = rows[1].split(";");
+                    if (
+                        firstRowCols.length === secondRowCols.length &&
+                        firstRowCols[0] !== secondRowCols[0]
+                    ) {
+                        hasHeaderRow = true; // Likely a header row if first cell differs and counts match
+                    }
+                }
+
+                // Also check using the previous character type logic as a fallback
+                const firstRowLooksLikeHeader = firstRowCols.some(
+                    (h) =>
+                        /[a-zA-Z]/.test(h.trim()) &&
+                        !/^\d+(\.\d+)?$/.test(h.trim()),
+                );
+
+                if (
+                    hasHeaderRow ||
+                    (rows.length > 1 && firstRowLooksLikeHeader)
+                ) {
+                    headersToUse = firstRowCols.map((h) => cleanKey(h.trim()));
+                    dataRowsStr = rows.slice(1); // Use rows after the first
+                    console.log(
+                        `[${apiMethod}] Determined first row is header. Parsed headers: [${headersToUse.join(", ")}]`,
+                    );
+                    // Handle duplicates
                     const usedCounts: Record<string, number> = {};
                     const finalHeaders: string[] = [];
-                    
                     for (const h of headersToUse) {
                         const count = (usedCounts[h] || 0) + 1;
                         usedCounts[h] = count;
                         finalHeaders.push(count === 1 ? h : `${h}_${count}`);
                     }
-                    
                     headersToUse = finalHeaders;
+                    console.log(
+                        `[${apiMethod}] Final unique headers: [${headersToUse.join(", ")}]`,
+                    );
                 } else {
-                    // First row looks like data, use generic headers
-                    const numCols = rows[0].split(";").length;
-                    headersToUse = Array(numCols).fill(0).map((_, i) => `Col${i+1}`);
+                    // Assume no header row (either single row, or multi-row data)
+                    const numCols = firstRowCols.length;
+                    headersToUse = Array(numCols)
+                        .fill(0)
+                        .map((_, i) => `Col${i + 1}`);
                     dataRowsStr = rows; // Use all rows as data
+                    console.log(
+                        `[${apiMethod}] Assuming no header row. Using generic headers: [${headersToUse.join(", ")}]`,
+                    );
                 }
-            } else if (rows.length === 1) {
-                // Single row, use generic headers
-                const numCols = rows[0].split(";").length;
-                headersToUse = Array(numCols).fill(0).map((_, i) => `Col${i+1}`);
-                dataRowsStr = rows;
             } else {
-                return []; // Should not happen if rows is not empty
+                console.log(
+                    `[${apiMethod}] Not enough rows to determine headers without mapping.`,
+                );
+                return [];
             }
+        } else {
+            console.log(
+                `[${apiMethod}] Using provided key mapping: [${headersToUse.join(", ")}]`,
+            );
         }
-        
-        // Check if we determined headers
-        if (!headersToUse) {
-            console.warn("Warning: Could not determine headers for response.");
-            return dataRowsStr.map(r => ({ raw_row: r })); // Return raw rows if headers fail
+        // --- End Header Logic ---
+
+        if (!headersToUse || headersToUse.length === 0) {
+            console.warn(
+                `[${apiMethod}] Warning: Could not determine headers for response.`,
+            );
+            return dataRowsStr.map((r) => ({ raw_row: r }));
         }
-        
-        // Process data rows using the determined headers
+
         const structuredData: Record<string, any>[] = [];
         const numHeaders = headersToUse.length;
-        
+        console.log(
+            `[${apiMethod}] Processing ${dataRowsStr.length} data rows with ${numHeaders} headers...`,
+        );
         for (const rowStr of dataRowsStr) {
-            const cols = rowStr.split(";").map(c => c.trim());
-            
-            // Pad or truncate row data to match header count
-            if (cols.length < numHeaders) {
-                cols.push(...Array(numHeaders - cols.length).fill(null));
-            } else if (cols.length > numHeaders) {
-                cols.splice(numHeaders);
+            const cols = rowStr.split(";").map((c) => c.trim());
+            // Pad / Truncate more robustly
+            const finalCols = Array(numHeaders).fill(null);
+            for (let i = 0; i < numHeaders; i++) {
+                if (i < cols.length) {
+                    finalCols[i] = cols[i] === "null" ? null : cols[i]; // Handle 'null' string
+                }
             }
-            
-            // Replace "null" string with actual null
-            const cleanedCols = cols.map(c => c === 'null' ? null : c);
-            
-            // Create object from headers and values
+
             const rowDict: Record<string, any> = {};
             for (let i = 0; i < numHeaders; i++) {
-                rowDict[headersToUse[i]] = cleanedCols[i];
+                rowDict[headersToUse[i]] = finalCols[i];
             }
-            
             structuredData.push(rowDict);
         }
-        
+        console.log(
+            `[${apiMethod}] Finished parsing. Result length: ${structuredData.length}`,
+        );
         return structuredData;
-        
     } catch (error: any) {
-        console.error(`Error parsing response string into structure: ${error.message}`);
+        console.error(
+            `[${apiMethod}] Error parsing response string into structure: ${error.message}`,
+        );
         return [{ error: "Parsing failed", raw_response: responseStr }];
     }
 }
 
-/**
- * Specialized parser for the transposed GetExposureDynamic response.
- */
-function parseExposureDynamic(responseStr: string | null): any[] {
+/** Specialized parser for GetExposureDynamic */
+function parseExposureDynamic(
+    apiMethod: string,
+    responseStr: string | null,
+): Record<string, any>[] {
+    console.log(
+        `[${apiMethod}] parseExposureDynamic received string:`,
+        responseStr ? `"${responseStr.substring(0, 150)}..."` : "null",
+    );
     if (!responseStr || !responseStr.trim()) {
         return [];
     }
-    
     const lowerStripped = responseStr.trim().toLowerCase();
-    if (lowerStripped.includes("no record") || lowerStripped.includes("no data")) {
+    if (
+        lowerStripped.includes("no record") ||
+        lowerStripped.includes("no data") ||
+        lowerStripped === "not authorized"
+    ) {
+        console.log(
+            `[${apiMethod}] Detected 'no data' or 'not authorized' in response string.`,
+        );
+        if (lowerStripped === "not authorized") {
+            return [{ Metric: "Error", Error: "Not Authorized" }];
+        }
         return [];
     }
-    
+
     try {
-        const rows = responseStr.trim().split("|").map(r => r.trim()).filter(r => r);
+        const rows = responseStr
+            .trim()
+            .split("|")
+            .map((r) => r.trim())
+            .filter((r) => r);
+        console.log(
+            `[${apiMethod}] Found ${rows.length} rows for exposure parsing.`,
+        );
         if (rows.length < 2) {
-            console.warn("Warning: Not enough rows in GetExposureDynamic response for specific parsing. Falling back.");
-            // Fallback to generic parser if structure is unexpected
-            return parseResponseToStructure(responseStr);
+            console.warn(
+                `[${apiMethod}] Not enough rows for specific parsing. Falling back.`,
+            );
+            return parseResponseToStructure(apiMethod, responseStr);
         }
-        
-        // First row contains market names (headers for the columns)
-        const marketHeadersRaw = rows[0].split(";").map(h => h.trim());
-        if (!marketHeadersRaw || marketHeadersRaw[0].toLowerCase().trim() !== 'market name') {
-            console.warn("Warning: Unexpected header format in GetExposureDynamic. Falling back.");
-            return parseResponseToStructure(responseStr);
+
+        const marketHeadersRaw = rows[0].split(";").map((h) => h.trim());
+        // More robust check for header row
+        if (
+            !marketHeadersRaw ||
+            !marketHeadersRaw[0] ||
+            marketHeadersRaw[0].toLowerCase().trim() !== "market name"
+        ) {
+            console.warn(
+                `[${apiMethod}] Unexpected header format (First cell: "${marketHeadersRaw[0]}"). Falling back.`,
+            );
+            return parseResponseToStructure(apiMethod, responseStr);
         }
-        
-        // Clean the market names to be used as keys
-        const marketKeys = marketHeadersRaw.slice(1).map(mh => cleanKey(mh));
-        
+
+        const marketKeys = marketHeadersRaw.slice(1).map((mh) => cleanKey(mh));
+        console.log(`[${apiMethod}] Market keys: [${marketKeys.join(", ")}]`);
         const structuredData: Record<string, any>[] = [];
-        
-        // Process subsequent rows, where first column is the metric name
+
+        console.log(
+            `[${apiMethod}] Processing ${rows.length - 1} metric rows...`,
+        );
         for (const rowStr of rows.slice(1)) {
-            const cols = rowStr.split(";").map(c => c.trim());
+            const cols = rowStr.split(";").map((c) => c.trim());
             if (!cols.length) continue;
-            
             const metricNameRaw = cols[0];
-            // Clean the metric name (first column value) to be a key
-            const metricKey = cleanKey(metricNameRaw);
-            
-            // Handle "null" string and extract values
-            let metricValues = cols.slice(1).map(v => v === 'null' ? null : v);
-            
-            // Pad or truncate values
-            if (metricValues.length < marketKeys.length) {
-                metricValues = [...metricValues, ...Array(marketKeys.length - metricValues.length).fill(null)];
-            } else if (metricValues.length > marketKeys.length) {
-                metricValues = metricValues.slice(0, marketKeys.length);
-            }
-            
-            // Create dictionary for this metric
-            const rowDict: Record<string, any> = { 
-                Metric: metricNameRaw  // Keep original name for readability
-            };
-            
-            // Add market values
+
+            const finalCols = Array(marketKeys.length).fill(null);
             for (let i = 0; i < marketKeys.length; i++) {
-                rowDict[marketKeys[i]] = metricValues[i];
+                const valIndex = i + 1; // Values start from index 1 in cols array
+                if (valIndex < cols.length) {
+                    finalCols[i] =
+                        cols[valIndex] === "null" ? null : cols[valIndex];
+                }
             }
-            
+
+            const rowDict: Record<string, any> = { Metric: metricNameRaw };
+            for (let i = 0; i < marketKeys.length; i++) {
+                rowDict[marketKeys[i]] = finalCols[i];
+            }
             structuredData.push(rowDict);
         }
-        
+        console.log(
+            `[${apiMethod}] Finished parsing exposure. Result length: ${structuredData.length}`,
+        );
         return structuredData;
-        
     } catch (error: any) {
-        console.error(`Error parsing GetExposureDynamic response: ${error.message}`);
-        return [{ error: "GetExposureDynamic parsing failed", raw_response: responseStr }];
+        console.error(
+            `[${apiMethod}] Error parsing GetExposureDynamic response: ${error.message}`,
+        );
+        return [
+            {
+                error: "GetExposureDynamic parsing failed",
+                raw_response: responseStr,
+            },
+        ];
     }
 }
 
-/**
- * Legacy parser - retains backward compatibility with existing code
- * Parses the common '|' and ';' separated string into headers and data arrays.
- */
-function parseApiResponse(responseStr: string | null) {
-    const result = { headers: [] as string[], data: [] as string[][] };
-    if (!responseStr || typeof responseStr !== 'string' || !responseStr.trim() || /no record|no data/i.test(responseStr)) {
-        return result;
+/** Extracts account numbers using specified key */
+function extractAccountNumbers(
+    structuredData: Record<string, any>[],
+    accountKey: string = "AccountCode",
+): string[] {
+    if (!Array.isArray(structuredData) || structuredData.length === 0) {
+        return [];
     }
-
+    const accountNumbers: string[] = [];
     try {
-        const rows = responseStr.trim().split('|').map(r => r.trim()).filter(r => r);
-        if (!rows.length) {
-            return result;
-        }
-
-        // Assume first row is headers if more than one row
-        if (rows.length > 1) {
-            result.headers = rows[0].split(';').map(h => h.trim());
-            // Process data rows (all but first)
-            for (let i = 1; i < rows.length; i++) {
-                const cols = rows[i].split(';').map(c => c.trim());
-                result.data.push(cols);
+        for (const item of structuredData) {
+            if (item && typeof item === "object" && accountKey in item) {
+                const accountNum = item[accountKey];
+                if (
+                    accountNum !== null &&
+                    accountNum !== undefined &&
+                    String(accountNum).toLowerCase() !== "not authorized"
+                ) {
+                    accountNumbers.push(String(accountNum).trim());
+                }
             }
-        } else {
-            // Single row - assume data only
-            const cols = rows[0].split(';').map(c => c.trim());
-            // Generate generic headers like col1, col2, etc.
-            result.headers = Array(cols.length).fill(0).map((_, i) => `col${i + 1}`);
-            result.data.push(cols);
         }
     } catch (error: any) {
-        console.error(`Error parsing API response: ${error.message}`);
+        console.error(
+            `Error extracting account numbers using key '${accountKey}': ${error.message}`,
+        );
     }
-
-    return result;
+    console.log(
+        `Extracted valid account numbers: [${accountNumbers.join(", ")}]`,
+    );
+    return accountNumbers.filter((acc) => acc); // Filter out empty strings
 }
 
-/**
- * Formats a number string into PKR currency format.
- */
-function formatPkr(valueStr: string | number) {
-    const value = typeof valueStr === 'string' ? parseFloat(valueStr.replace(/[^\d.-]/g, '') || '0') : valueStr;
-    return `PKR ${value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-}
-
-/** Formats number string as signed PKR, e.g., +PKR 100.00 */
-function formatPkrSigned(valueStr: string | number) {
-    const value = typeof valueStr === 'string' ? parseFloat(valueStr.replace(/[^\d.-]/g, '') || '0') : valueStr;
-    const sign = value >= 0 ? '+' : '';
-    return `${sign}PKR ${value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-}
-
-/** Parses common date formats ('Mar 01, 2025', 'YYYY-MM-DD') to 'YYYY-MM-DD'. */
-function parseDateFlexible(dateStr: string) {
-    if (!dateStr) return '';
-    // Check if already in YYYY-MM-DD format
-    if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return dateStr;
-    
-    try {
-        const date = new Date(dateStr);
-        if (isNaN(date.getTime())) return dateStr; // Return original if parse fails
-        
-        const year = date.getFullYear();
-        const month = String(date.getMonth() + 1).padStart(2, '0');
-        const day = String(date.getDate()).padStart(2, '0');
-        
-        return `${year}-${month}-${day}`;
-    } catch (e) {
-        return dateStr; // Return original on error
-    }
+/** Safely convert value to string */
+function toStringSafe(value: any): string {
+    if (value === null || value === undefined) return "";
+    return String(value);
 }
 
 // ============================
-// Data Fetching Functions
+// Data Fetching Functions (Using Correct Parsing & Auth Handling)
 // ============================
 
-async function getTradingAccounts(client: any, userId: string) {
-    console.log(`Fetching trading accounts for user ${userId}...`);
-    
-    // Setup for output
+interface FetchResult {
+    headers: string[];
+    data: string[][];
+}
+
+async function getTradingAccounts(
+    client: any,
+    traderId: string,
+): Promise<{ result: FetchResult; primaryAccount: string }> {
+    const apiMethod = "TradAccounts";
+    console.log(`---> Fetching ${apiMethod} for trader ${traderId}...`);
     const targetHeaders = ["Account", "Name", "Status", "Type", "Balance"];
-    let primaryAccount = DEFAULT_ACCOUNT_FALLBACK; // Default if API fails
-    const sampleData = [ // Fallback data
-        ["COAF3906", "Jawad Foqan", "Active", "Cash", "PKR 587,210.45"],
-        ["COAF3907", "Jawad Foqan", "Active", "Margin", "PKR 123,456.78"]
+    let primaryAccount = DEFAULT_ACCOUNT_FALLBACK;
+    const fallbackData: string[][] = [
+        [DEFAULT_ACCOUNT_FALLBACK, traderId, "Auth Failed", "N/A", "N/A"],
     ];
 
     try {
-        // Make the SOAP API call
-        const result = await client.TradAccountsAsync({ userName: userId });
-        console.log("Raw trading accounts result:", JSON.stringify(result, null, 2));
-        
-        // Extract the response data properly
-        const rawResponse = result[0]?.TradAccountsResult ?? result[0]?.return ?? result[0] ?? null;
-        console.log("Extracted raw response:", rawResponse);
-        
-        // Process and decompress the response
-        const processed = await processAndUnzipResponse(rawResponse);
-        console.log("Processed response:", processed);
-        
-        // Parse the response using our structured parser with column mapping
-        const structuredData = parseResponseToStructure(processed, KEY_MAPPINGS.TradAccounts);
-        console.log("Structured account data:", JSON.stringify(structuredData, null, 2));
-        
-        if (structuredData.length > 0) {
-            // Transform structured data to match expected output format
-            const dataOut: string[][] = structuredData.map(item => {
-                // Convert everything to strings to avoid [object Object] issues
-                const account = item.AccountCode !== null && item.AccountCode !== undefined ? 
-                                String(item.AccountCode) : "";
-                const name = item.AccountTitle !== null && item.AccountTitle !== undefined ? 
-                             String(item.AccountTitle) : "";
-                const status = DEFAULT_TRADING_ACCOUNT_STATUS;
-                
-                // Simple logic based on example output
-                const accType = item.AccountCode === "COAF3906" ? 
-                    DEFAULT_TRADING_ACCOUNT_TYPE_CASH : 
-                    DEFAULT_TRADING_ACCOUNT_TYPE_MARGIN;
-                
-                // Add balance based on account number
-                let balance = "PKR ?";
-                if (account === "COAF3906") balance = "PKR 587,210.45";
-                else if (account === "COAF3907") balance = "PKR 123,456.78";
-                
-                return [account, name, status, accType, balance];
-            });
-            
-            // Set primary account as the first one
-            if (dataOut.length > 0 && dataOut[0][0]) {
-                primaryAccount = dataOut[0][0];
-                console.log(`Trading Accounts fetched successfully. Primary Account: ${primaryAccount}`);
-                console.log("Final trading account data:", JSON.stringify(dataOut, null, 2));
-                
-                return { 
-                    result: { 
-                        headers: targetHeaders, 
-                        data: dataOut 
-                    }, 
-                    primaryAccount 
+        const params = { userName: traderId };
+        console.log(
+            `[${apiMethod}] Calling ${apiMethod}Async with params:`,
+            params,
+        );
+        const result = await client.TradAccountsAsync(params);
+        const processed = await processAndUnzipResponse(apiMethod, result);
+
+        if (processed?.toLowerCase() === "not authorized") {
+            console.error(
+                `[${apiMethod}] Authentication failed for user ${traderId}. Response: "Not Authorized"`,
+            );
+            return {
+                result: { headers: targetHeaders, data: fallbackData },
+                primaryAccount,
+            };
+        }
+        if (!processed) {
+            console.warn(
+                `[${apiMethod}] Processed response is null or empty for ${traderId}.`,
+            );
+            return {
+                result: { headers: targetHeaders, data: [] },
+                primaryAccount,
+            };
+        }
+
+        const structuredData = parseResponseToStructure(
+            apiMethod,
+            processed,
+            KEY_MAPPINGS[apiMethod],
+        );
+
+        const accountNumbers = extractAccountNumbers(
+            structuredData,
+            "AccountCode",
+        );
+
+        if (accountNumbers.length > 0) {
+            primaryAccount = accountNumbers[0];
+            console.log(
+                `[${apiMethod}] Primary account determined: ${primaryAccount}`,
+            );
+            const dataOut: string[][] = structuredData.map((item) => [
+                toStringSafe(item.AccountCode),
+                toStringSafe(item.AccountTitle),
+                toStringSafe(item.AccountStatus || "Active"),
+                "Unknown",
+                "PKR ?",
+            ]);
+            console.log(
+                `[${apiMethod}] Success. Found ${dataOut.length} accounts.`,
+            );
+            return {
+                result: { headers: targetHeaders, data: dataOut },
+                primaryAccount,
+            };
+        } else {
+            console.warn(
+                `[${apiMethod}] No valid account numbers extracted for ${traderId}.`,
+            );
+            if (
+                structuredData.length > 0 &&
+                structuredData[0]?.[KEY_MAPPINGS[apiMethod][0]] ===
+                    "Not Authorized"
+            ) {
+                console.error(
+                    `[${apiMethod}] Auth failed (detected during parsing).`,
+                );
+                return {
+                    result: { headers: targetHeaders, data: fallbackData },
+                    primaryAccount: DEFAULT_ACCOUNT_FALLBACK,
                 };
             }
+            return {
+                result: { headers: targetHeaders, data: [] },
+                primaryAccount: DEFAULT_ACCOUNT_FALLBACK,
+            };
         }
-        
-        // If no data found or transform failed, use sample data
-        console.warn(`No valid trading accounts parsed for ${userId}. Using sample data.`);
-        return { 
-            result: { 
-                headers: targetHeaders, 
-                data: sampleData 
-            }, 
-            primaryAccount: sampleData[0][0]
-        };
-        
     } catch (error: any) {
-        console.error(`Error fetching/parsing Trading Accounts for ${userId}: ${error.message}`);
+        console.error(
+            `[${apiMethod}] CRITICAL ERROR for ${traderId}: ${error.message}`,
+        );
         console.error(error.stack);
-        
-        // Return fallback data on error
-        return { 
-            result: { 
-                headers: targetHeaders, 
-                data: sampleData 
-            }, 
-            primaryAccount: sampleData[0][0]
+        if (error.Fault) {
+            console.error("SOAP Fault:", JSON.stringify(error.Fault, null, 2));
+        }
+        return {
+            result: { headers: targetHeaders, data: fallbackData },
+            primaryAccount,
         };
     }
 }
 
-async function getOrderHistory(client: any, userId: string, accountNo: string, startDate = COMMON_START_DATE, endDate = COMMON_END_DATE) {
-    console.log(`Fetching order history for user ${userId}, account ${accountNo}...`);
-    
-    // Setup for output
-    const targetHeaders = ["Order ID", "Symbol", "Side", "Type", "Quantity", "Price", "Status", "Date"];
-    const sampleData = [
-        ["ORD001", "MARI", "Buy", DEFAULT_ORDER_TYPE, "100", "PKR 1,234.56", "Completed", "2025-03-01"],
-        ["ORD002", "ENGRO", "Sell", "Market", "50", "PKR 987.65", "Completed", "2025-03-02"],
-        ["ORD003", "LUCK", "Buy", DEFAULT_ORDER_TYPE, "75", "PKR 567.89", "Rejected", "2025-03-03"]
+async function getOrderHistory(
+    client: any,
+    traderId: string,
+    accountNo: string,
+    startDate = COMMON_START_DATE,
+    endDate = COMMON_END_DATE,
+): Promise<FetchResult> {
+    const apiMethod = "GetOrderHistory";
+    console.log(
+        `---> Fetching ${apiMethod} for trader ${traderId}, account ${accountNo}...`,
+    );
+    const targetHeaders = [
+        "Order ID",
+        "Symbol",
+        "Side",
+        "Type",
+        "Quantity",
+        "Price",
+        "Status",
+        "Date",
+    ];
+    const fallbackData: string[][] = [
+        [
+            "N/A",
+            "N/A",
+            "N/A",
+            "N/A",
+            "N/A",
+            "N/A",
+            accountNo === DEFAULT_ACCOUNT_FALLBACK ? "Auth Failed" : "Error",
+            "N/A",
+        ],
     ];
 
+    if (accountNo === DEFAULT_ACCOUNT_FALLBACK) {
+        console.warn(
+            `[${apiMethod}] Skipping API call due to previous authentication failure.`,
+        );
+        return { headers: targetHeaders, data: fallbackData };
+    }
+
     try {
-        // Prepare API call parameters 
         const params = {
-            trader: userId,
+            trader: traderId,
             accountNo: accountNo,
-            pincode: "",  // Optional in some implementations
-            scrip: "ALL", // Get all scripts/symbols
-            type: "ALL",  // Get all order types
+            pincode: "",
+            scrip: "ALL",
+            type: "ALL",
             startDate: startDate,
             endDate: endDate,
-            from: "OrderHistory"  // Specify we want order history
+            from: "OrderHistory",
         };
-        
-        // Make the SOAP API call
+        console.log(
+            `[${apiMethod}] Calling ${apiMethod}Async with params:`,
+            params,
+        );
         const result = await client.GetOrderHistoryAsync(params);
-        console.log("Raw order history result:", JSON.stringify(result, null, 2));
-        
-        // Extract response data
-        const rawResponse = result[0]?.GetOrderHistoryResult ?? result[0]?.return ?? result[0] ?? null;
-        
-        // Process and decompress
-        const processed = await processAndUnzipResponse(rawResponse);
-        console.log("Processed order history:", processed);
-        
-        // Parse using our structured parser with column mapping
-        const structuredData = parseResponseToStructure(processed, KEY_MAPPINGS.GetOrderHistory);
-        console.log("Structured order data:", JSON.stringify(structuredData, null, 2));
-        
-        if (structuredData.length > 0) {
-            // Transform structured data to match expected output format
-            const dataOut: string[][] = structuredData.map(item => {
-                // Generate a fake order ID if none exists
-                const orderId = `ORD${Math.floor(Math.random() * 10000).toString().padStart(4, '0')}`;
-                
-                const symbol = String(item.Symbol || "");
-                const side = String(item.Side || "Buy");
-                const type = String(item.OrderType || DEFAULT_ORDER_TYPE);
-                const quantity = String(item.Quantity || "0");
-                
-                // Format the price
-                let price = "PKR 0.00";
-                if (item.Rate) {
-                    price = formatPkr(item.Rate);
-                }
-                
-                // Status might not be directly available
-                const status = "Completed"; // Assume completed
-                
-                // Format date if available
-                let date = parseDateFlexible(String(item.OrderDate || ""));
-                if (!date && item.TradeDate) {
-                    date = parseDateFlexible(String(item.TradeDate));
-                }
-                
-                return [orderId, symbol, side, type, quantity, price, status, date];
-            });
-            
-            console.log(`Order History fetched successfully. Items: ${dataOut.length}`);
+        const processed = await processAndUnzipResponse(apiMethod, result);
+
+        if (processed?.toLowerCase() === "not authorized") {
+            console.error(
+                `[${apiMethod}] Authentication failed for this call.`,
+            );
+            return {
+                headers: targetHeaders,
+                data: [
+                    [
+                        "N/A",
+                        "N/A",
+                        "N/A",
+                        "N/A",
+                        "N/A",
+                        "N/A",
+                        "Auth Failed",
+                        "N/A",
+                    ],
+                ],
+            };
+        }
+        if (!processed) {
+            console.warn(
+                `[${apiMethod}] Processed response is null or empty for ${traderId}.`,
+            );
+            return { headers: targetHeaders, data: [] };
+        }
+
+        const structuredData = parseResponseToStructure(
+            apiMethod,
+            processed,
+            KEY_MAPPINGS[apiMethod],
+        );
+
+        if (
+            structuredData.length === 1 &&
+            structuredData[0]?.[KEY_MAPPINGS[apiMethod][0]] === "Not Authorized"
+        ) {
+            console.error(
+                `[${apiMethod}] Authentication failed (detected during parsing).`,
+            );
+            return {
+                headers: targetHeaders,
+                data: [
+                    [
+                        "N/A",
+                        "N/A",
+                        "N/A",
+                        "N/A",
+                        "N/A",
+                        "N/A",
+                        "Auth Failed",
+                        "N/A",
+                    ],
+                ],
+            };
+        }
+
+        if (structuredData.length > 0 && !structuredData[0]?.error) {
+            const dataOut: string[][] = structuredData.map((item, index) => [
+                toStringSafe(item.Reference || `OH-${index + 1}`),
+                toStringSafe(item.Symbol),
+                toStringSafe(item.Side),
+                toStringSafe(item.OrderType),
+                toStringSafe(item.Quantity),
+                toStringSafe(item.Rate),
+                "Completed",
+                toStringSafe(item.OrderDate || item.TradeDate || ""),
+            ]);
+            console.log(
+                `[${apiMethod}] Success. Found ${dataOut.length} orders.`,
+            );
             return { headers: targetHeaders, data: dataOut };
         }
-        
-        // If no data found or transform failed, use sample data
-        console.warn(`No valid order history for ${userId}. Using sample data.`);
-        return { headers: targetHeaders, data: sampleData };
-        
+
+        console.warn(
+            `[${apiMethod}] No valid data or parsing error for ${traderId}. Using fallback.`,
+        );
+        return { headers: targetHeaders, data: fallbackData };
     } catch (error: any) {
-        console.error(`Error fetching order history for ${userId}: ${error.message}`);
+        console.error(
+            `Error in ${apiMethod} for ${traderId}: ${error.message}`,
+        );
         console.error(error.stack);
-        
-        // Return fallback data on error
-        return { headers: targetHeaders, data: sampleData };
-    }
-}
-
-async function getPositions(client: any, userId: string, accountNo: string) {
-    console.log(`Fetching positions for user ${userId}, account ${accountNo}...`);
-    
-    // Setup for output
-    const targetHeaders = ["Symbol", "Quantity", "Cost", "Current Value", "Profit/Loss", "Change %"];
-    const sampleData = [
-        ["MARI", "200", "PKR 246,912.00", "PKR 250,000.00", "+PKR 3,088.00", "+1.25%"],
-        ["ENGRO", "150", "PKR 148,147.50", "PKR 145,000.00", "-PKR 3,147.50", "-2.12%"],
-        ["LUCK", "100", "PKR 56,789.00", "PKR 60,000.00", "+PKR 3,211.00", "+5.65%"]
-    ];
-
-    try {
-        // Prepare API call parameters
-        const params = {
-            trader: userId,
-            accountNo: accountNo,
-            pincode: "",
-        };
-        
-        // Check if GetCollateralAsync exists, otherwise use fallback
-        if (typeof client.GetCollateralAsync === 'function') {
-            // Make the SOAP API call to GetCollateral instead of ListHolding 
-            const result = await client.GetCollateralAsync(params);
-            console.log("Raw positions result:", JSON.stringify(result, null, 2));
-            
-            // Extract response data
-            const rawResponse = result[0]?.GetCollateralResult ?? result[0]?.return ?? result[0] ?? null;
-            
-            // Process and decompress
-            const processed = await processAndUnzipResponse(rawResponse);
-            console.log("Processed positions response:", processed);
-            
-            // Parse using our structured parser with column mapping for GetCollateral
-            const structuredData = parseResponseToStructure(processed, KEY_MAPPINGS.GetCollateral);
-            console.log("Structured position data:", JSON.stringify(structuredData, null, 2));
-            
-            if (structuredData.length > 0) {
-                // Transform structured data to match expected output format
-                const dataOut: string[][] = structuredData.map(item => {
-                    const symbol = String(item.Symbol || "");
-                    const quantity = String(item.Quantity || "0");
-                    
-                    // Parse numeric values for calculations
-                    const costRaw = parseFloat(String(item.AvgBuyRate || 0).replace(/[^\d.-]/g, '') || '0') * 
-                                parseFloat(quantity);
-                    const valueRaw = parseFloat(String(item.MTM_Rate || 0).replace(/[^\d.-]/g, '') || '0') * 
-                                    parseFloat(quantity);
-                    
-                    // Calculate P/L
-                    const plValue = valueRaw - costRaw;
-                    const plPercent = costRaw !== 0 ? (plValue / costRaw) * 100 : 0;
-                    
-                    // Format for display
-                    const cost = formatPkr(costRaw);
-                    const value = formatPkr(valueRaw);
-                    const pl = formatPkrSigned(plValue);
-                    const plPercentStr = `${plValue >= 0 ? '+' : ''}${plPercent.toFixed(2)}%`;
-                    
-                    return [symbol, quantity, cost, value, pl, plPercentStr];
-                });
-                
-                console.log(`Positions fetched successfully. Items: ${dataOut.length}`);
-                return { headers: targetHeaders, data: dataOut };
-            }
+        if (error.Fault) {
+            console.error("SOAP Fault:", JSON.stringify(error.Fault, null, 2));
         }
-        
-        // If no data found or transform failed, use sample data
-        console.warn(`No valid positions for ${userId}. Using sample data.`);
-        return { headers: targetHeaders, data: sampleData };
-        
-    } catch (error: any) {
-        console.error(`Error fetching positions for ${userId}: ${error.message}`);
-        console.error(error.stack);
-        
-        // Return fallback data on error
-        return { headers: targetHeaders, data: sampleData };
+        return { headers: targetHeaders, data: fallbackData };
     }
 }
 
-async function getAccountInfo(client: any, userId: string, accountNo: string) {
-    console.log(`Fetching account info for user ${userId}, account ${accountNo}...`);
-    
-    // Setup for output
-    const targetHeaders = ["Detail", "Value"];
-    const sampleData = [
-        ["Account ID", accountNo],
-        ["Account Type", "Margin"],
-        ["Account Status", "Active"],
-        ["Available Funds", "PKR 587,210.45"],
-        ["Margin Used", "PKR 180,000.00"],
-        ["Margin Call Level", DEFAULT_MARGIN_CALL_LEVEL],
-        ["Current Margin Usage", DEFAULT_CURRENT_MARGIN_USAGE]
+async function getPositions(
+    client: any,
+    traderId: string,
+    accountNo: string,
+): Promise<FetchResult> {
+    const apiMethod = "GetCollateral";
+    console.log(
+        `---> Fetching Positions (via ${apiMethod}) for trader ${traderId}, account ${accountNo}...`,
+    );
+    const targetHeaders = [
+        "Symbol",
+        "Quantity",
+        "Avg Buy Rate",
+        "MTM Rate",
+        "Unsettled P/L",
+        "Value After Haircut",
+    ];
+    const fallbackData: string[][] = [
+        [
+            "N/A",
+            "N/A",
+            "N/A",
+            "N/A",
+            accountNo === DEFAULT_ACCOUNT_FALLBACK ? "Auth Failed" : "Error",
+            "N/A",
+        ],
     ];
 
+    if (accountNo === DEFAULT_ACCOUNT_FALLBACK) {
+        console.warn(
+            `[${apiMethod}] Skipping API call due to previous authentication failure.`,
+        );
+        return { headers: targetHeaders, data: fallbackData };
+    }
+    if (typeof client.GetCollateralAsync !== "function") {
+        console.error(
+            `[${apiMethod}] Method GetCollateralAsync not found on SOAP client.`,
+        );
+        return { headers: targetHeaders, data: fallbackData };
+    }
+
     try {
-        // Prepare API call parameters
-        const params = {
-            trader: userId,
-            accountNo: accountNo,
-            pincode: "",
-        };
-        
-        // Check if GetAccountDetailAsync exists, use an alternative if not available
-        if (typeof client.GetAccountDetailAsync === 'function') {
-            // Make the SOAP API call to GetAccountDetail 
-            const result = await client.GetAccountDetailAsync(params);
-            console.log("Raw account info result:", JSON.stringify(result, null, 2));
-            
-            // Extract response data
-            const rawResponse = result[0]?.GetAccountDetailResult ?? result[0]?.return ?? result[0] ?? null;
-            
-            // Process and decompress
-            const processed = await processAndUnzipResponse(rawResponse);
-            console.log("Processed account info:", processed);
-            
-            // Parse using a generic parser (no specific mapping for account details)
-            const structuredData = parseResponseToStructure(processed);
-            console.log("Structured account info:", JSON.stringify(structuredData, null, 2));
-            
-            if (structuredData.length > 0) {
-                // TODO: Transform structured data to match expected output format when API returns real data
-                // For now, we'll still use the sample data but log that we're doing so
-                console.log("Account info API returned data but using sample data for display consistency");
-            }
-        } else if (typeof client.GetAccountStatementAsync === 'function') {
-            // Try an alternative method if available
-            console.log("GetAccountDetailAsync not available, trying GetAccountStatementAsync instead");
-            
-            // Different params for account statement 
-            const statementParams = {
-                trader: userId,
-                accountNo: accountNo,
-                startDate: COMMON_START_DATE,
-                endDate: COMMON_END_DATE
+        const params = { UserID: traderId, Account: accountNo };
+        console.log(
+            `[${apiMethod}] Calling ${apiMethod}Async with params:`,
+            params,
+        );
+        const result = await client.GetCollateralAsync(params);
+        const processed = await processAndUnzipResponse(apiMethod, result);
+
+        if (processed?.toLowerCase() === "not authorized") {
+            console.error(
+                `[${apiMethod}] Authentication failed for this call.`,
+            );
+            return {
+                headers: targetHeaders,
+                data: [["N/A", "N/A", "N/A", "N/A", "Auth Failed", "N/A"]],
             };
-            
-            const result = await client.GetAccountStatementAsync(statementParams);
-            // Process similarly to above...
-            console.log("Account statement fetched as alternative to account details");
-        } else {
-            console.warn("No suitable account info API methods found");
         }
-        
-        // For now, use sample data while testing
-        console.warn(`Using sample account data for ${userId} until complete API integration`);
-        return { headers: targetHeaders, data: sampleData };
-        
+        if (!processed) {
+            console.warn(
+                `[${apiMethod}] Processed response is null or empty for ${traderId}.`,
+            );
+            return { headers: targetHeaders, data: [] };
+        }
+
+        const structuredData = parseResponseToStructure(
+            apiMethod,
+            processed,
+            KEY_MAPPINGS[apiMethod],
+        );
+
+        if (
+            structuredData.length === 1 &&
+            structuredData[0]?.[KEY_MAPPINGS[apiMethod][0]] === "Not Authorized"
+        ) {
+            console.error(
+                `[${apiMethod}] Authentication failed (detected during parsing).`,
+            );
+            return {
+                headers: targetHeaders,
+                data: [["N/A", "N/A", "N/A", "N/A", "Auth Failed", "N/A"]],
+            };
+        }
+        if (structuredData.length === 1 && structuredData[0]?.error) {
+            console.error(
+                `[${apiMethod}] Parsing failed. Raw response: ${structuredData[0].raw_response}`,
+            );
+            return { headers: targetHeaders, data: fallbackData }; // Use generic error fallback
+        }
+
+        if (structuredData.length > 0 && !structuredData[0]?.error) {
+            const dataOut: string[][] = structuredData.map((item) => [
+                toStringSafe(item.Symbol),
+                toStringSafe(item.Quantity),
+                toStringSafe(item.AvgBuyRate),
+                toStringSafe(item.MTM_Rate),
+                toStringSafe(item.UnsettledPL),
+                toStringSafe(item.ValueAfterHaircut),
+            ]);
+            console.log(
+                `[${apiMethod}] Success. Found ${dataOut.length} positions.`,
+            );
+            return { headers: targetHeaders, data: dataOut };
+        }
+
+        console.warn(
+            `[${apiMethod}] No valid positions found or parsing error for ${traderId}. Using fallback.`,
+        );
+        return { headers: targetHeaders, data: fallbackData };
     } catch (error: any) {
-        console.error(`Error fetching account info for ${userId}: ${error.message}`);
+        console.error(
+            `Error in ${apiMethod} for ${traderId}: ${error.message}`,
+        );
         console.error(error.stack);
-        
-        // Return fallback data on error
-        return { headers: targetHeaders, data: sampleData };
+        if (error.Fault) {
+            console.error("SOAP Fault:", JSON.stringify(error.Fault, null, 2));
+        }
+        return { headers: targetHeaders, data: fallbackData };
     }
 }
 
-async function fetchAllAccountDetails(clientUsername: string, clientPassword: string) {
+
+
+// --- ADD GetAccountStatement Fetch Function ---
+async function getAccountStatement(client: any, traderId: string, accountNo: string, startDate = COMMON_START_DATE, endDate = COMMON_END_DATE): Promise<FetchResult> {
+    const apiMethod = "GetAccountStatement";
+    console.log(`---> Fetching ${apiMethod} for trader ${traderId}, account ${accountNo}...`);
+    const targetHeaders = ["Voucher No", "Date", "Description", "Debit", "Credit", "Balance"]; // Adjusted Headers for UI
+    const fallbackData: string[][] = [[ "N/A", "N/A", accountNo === DEFAULT_ACCOUNT_FALLBACK ? "Auth Failed" : "Error", "N/A", "N/A", "N/A" ]];
+
+    if (accountNo === DEFAULT_ACCOUNT_FALLBACK) {
+         console.warn(`[${apiMethod}] Skipping API call due to previous authentication failure.`);
+         return { headers: targetHeaders, data: fallbackData };
+    }
+    if (typeof client.GetAccountStatementAsync !== 'function') {
+        console.error(`[${apiMethod}] Method GetAccountStatementAsync not found on SOAP client.`);
+        return { headers: targetHeaders, data: fallbackData };
+    }
+
     try {
-        console.log(`Attempting to connect to AKD using username: ${clientUsername}`);
-        const timestamp = new Date().toISOString(); // Add timestamp to prevent caching
-        
-        // Create SOAP client
+        // Parameters for GetAccountStatement might differ slightly, adjust as needed
+        const params = {
+            userName: traderId, // Might be userName instead of traderId
+            accountNo: accountNo,
+            startDate: startDate,
+            endDate: endDate,
+            from: "TradeCast" // 'from' parameter might be needed
+        };
+        console.log(`[${apiMethod}] Calling ${apiMethod}Async with params:`, params);
+        const result = await client.GetAccountStatementAsync(params);
+        const processed = await processAndUnzipResponse(apiMethod, result);
+
+         if (processed?.toLowerCase() === 'not authorized') {
+             console.error(`[${apiMethod}] Authentication failed for this call.`);
+             return { headers: targetHeaders, data: [[ "N/A", "N/A", "Auth Failed", "N/A", "N/A", "N/A" ]] };
+          }
+          if (!processed) {
+              console.warn(`[${apiMethod}] Processed response is null or empty for ${traderId}.`);
+               return { headers: targetHeaders, data: [] };
+          }
+
+        const structuredData = parseResponseToStructure(apiMethod, processed, KEY_MAPPINGS[apiMethod]);
+
+         if (structuredData.length === 1 && structuredData[0]?.[KEY_MAPPINGS[apiMethod][0]] === 'Not Authorized') {
+              console.error(`[${apiMethod}] Authentication failed (detected during parsing).`);
+               return { headers: targetHeaders, data: [[ "N/A", "N/A", "Auth Failed", "N/A", "N/A", "N/A" ]] };
+          }
+          if (structuredData.length === 1 && structuredData[0]?.error) {
+               console.error(`[${apiMethod}] Parsing failed. Raw response: ${structuredData[0].raw_response}`);
+                return { headers: targetHeaders, data: fallbackData };
+           }
+
+        if (structuredData.length > 0 && !structuredData[0]?.error) {
+            const dataOut: string[][] = structuredData.map(item => [
+                toStringSafe(item.VoucherNo),
+                toStringSafe(item.Date),
+                toStringSafe(item.Description),
+                toStringSafe(item.Debit),
+                toStringSafe(item.Credit),
+                toStringSafe(item.Balance)
+                // Note: Skipping UnknownCol2 for UI clarity
+            ]);
+            console.log(`[${apiMethod}] Success. Found ${dataOut.length} statement entries.`);
+            return { headers: targetHeaders, data: dataOut };
+        }
+
+        console.warn(`[${apiMethod}] No valid data or parsing error for ${traderId}. Using fallback.`);
+        return { headers: targetHeaders, data: fallbackData };
+
+    } catch (error: any) {
+        console.error(`Error in ${apiMethod} for ${traderId}: ${error.message}`);
+        console.error(error.stack);
+        if (error.Fault) { console.error("SOAP Fault:", JSON.stringify(error.Fault, null, 2)); }
+        return { headers: targetHeaders, data: fallbackData };
+    }
+}
+
+async function getAccountInfo(
+    client: any,
+    traderId: string,
+    accountNo: string,
+): Promise<FetchResult> {
+    const apiMethod = "GetExposureDynamic";
+    console.log(
+        `---> Fetching Account Info (via ${apiMethod}) for trader ${traderId}, account ${accountNo}...`,
+    );
+    const targetHeaders = ["Detail", "Value"];
+    const fallbackData: string[][] = [
+        [
+            "Status",
+            accountNo === DEFAULT_ACCOUNT_FALLBACK
+                ? "Auth Failed"
+                : "Error fetching details",
+        ],
+    ];
+
+    if (accountNo === DEFAULT_ACCOUNT_FALLBACK) {
+        console.warn(
+            `[${apiMethod}] Skipping API call due to previous authentication failure.`,
+        );
+        return { headers: targetHeaders, data: fallbackData };
+    }
+    if (typeof client.GetExposureDynamicAsync !== "function") {
+        console.error(
+            `[${apiMethod}] Method GetExposureDynamicAsync not found on SOAP client.`,
+        );
+        return {
+            headers: targetHeaders,
+            data: [["Error", "API Method Unavailable"]],
+        };
+    }
+
+    try {
+        const params = { UserID: traderId, account: accountNo, approved: "0" };
+        console.log(
+            `[${apiMethod}] Calling ${apiMethod}Async with params:`,
+            params,
+        );
+        const result = await client.GetExposureDynamicAsync(params);
+        const processed = await processAndUnzipResponse(apiMethod, result);
+
+        if (processed?.toLowerCase() === "not authorized") {
+            console.error(
+                `[${apiMethod}] Authentication failed for this call.`,
+            );
+            return {
+                headers: targetHeaders,
+                data: [["Status", "Auth Failed"]],
+            };
+        }
+        if (!processed) {
+            console.warn(
+                `[${apiMethod}] Processed response is null or empty for ${traderId}.`,
+            );
+            return { headers: targetHeaders, data: [] };
+        }
+
+        const structuredData = parseExposureDynamic(apiMethod, processed); // Use the special parser
+
+        if (
+            structuredData.length === 1 &&
+            structuredData[0]?.Metric === "Error"
+        ) {
+            console.error(
+                `[${apiMethod}] Authentication failed or error during parsing:`,
+                structuredData[0].Error,
+            );
+            return {
+                headers: targetHeaders,
+                data: [
+                    ["Status", structuredData[0].Error || "Auth/Parse Failed"],
+                ],
+            };
+        }
+        if (structuredData.length === 1 && structuredData[0]?.error) {
+            console.error(
+                `[${apiMethod}] Parsing failed. Raw response: ${structuredData[0].raw_response}`,
+            );
+            return { headers: targetHeaders, data: fallbackData }; // Use generic error fallback
+        }
+
+        if (structuredData.length > 0 && !structuredData[0]?.error) {
+            const dataOut: string[][] = [["Account ID", accountNo]];
+            const findMetricValue = (
+                metricNamePattern: RegExp,
+                marketKeyPattern: RegExp = /^REG/i,
+            ): string | null => {
+                const metricRow = structuredData.find((item) =>
+                    metricNamePattern.test(item.Metric),
+                );
+                if (!metricRow) return null;
+                const matchingMarketKey = Object.keys(metricRow).find(
+                    (key) => key !== "Metric" && marketKeyPattern.test(key),
+                );
+                return matchingMarketKey
+                    ? toStringSafe(metricRow[matchingMarketKey])
+                    : null;
+            };
+
+            // Extract relevant details using RegEx patterns
+            const balance = findMetricValue(/^Floating_Balance/i);
+            const cashValue = findMetricValue(/^~Cash/i);
+            const allowedLimitReg = findMetricValue(/^Allowed_Limit/i, /^REG/i);
+            const availableAmtReg = findMetricValue(
+                /^Available_Amount|^Available_Amt/i,
+                /^REG/i,
+            ); // Match both patterns
+            const allowedLimitFut = findMetricValue(/^Allowed_Limit/i, /^FUT/i);
+            const availableAmtFut = findMetricValue(
+                /^Available_Amount|^Available_Amt/i,
+                /^FUT/i,
+            ); // Match both patterns
+            const exposure = findMetricValue(/^Exposure/i, /^FUT/i);
+            const profitLoss = findMetricValue(/^Profit\/Loss/i, /^ODL/i); // Assuming ODL market
+
+            if (balance) dataOut.push(["Floating Balance", balance]);
+            if (cashValue) dataOut.push(["Cash", cashValue]);
+            if (allowedLimitReg)
+                dataOut.push(["Allowed Limit (REG)", allowedLimitReg]);
+            if (availableAmtReg)
+                dataOut.push(["Available Amount (REG)", availableAmtReg]);
+            if (allowedLimitFut)
+                dataOut.push(["Allowed Limit (FUT)", allowedLimitFut]);
+            if (availableAmtFut)
+                dataOut.push(["Available Amount (FUT)", availableAmtFut]);
+            if (exposure) dataOut.push(["Exposure (FUT)", exposure]);
+            if (profitLoss) dataOut.push(["Profit/Loss (ODL)", profitLoss]);
+
+            console.log(`[${apiMethod}] Success. Extracted info.`);
+            return { headers: targetHeaders, data: dataOut };
+        }
+
+        console.warn(
+            `[${apiMethod}] No valid account info found or parsing error for ${traderId}. Using fallback.`,
+        );
+        return { headers: targetHeaders, data: fallbackData };
+    } catch (error: any) {
+        console.error(
+            `Error in ${apiMethod} for ${traderId}: ${error.message}`,
+        );
+        console.error(error.stack);
+        if (error.Fault) {
+            console.error("SOAP Fault:", JSON.stringify(error.Fault, null, 2));
+        }
+        return { headers: targetHeaders, data: fallbackData };
+    }
+}
+
+// ============================
+// Main Exported Functions
+// ============================
+
+async function fetchAllAccountDetails(
+    traderUsername: string,
+    traderPassword: string,
+) {
+    // Log received TRADER credentials (NO MASKING FOR DEBUG)
+    console.log(
+        `Credentials received for AKD connection: {"username":"${traderUsername}","password":"${traderPassword}"}`,
+    );
+
+    if (!traderUsername || !SERVICE_USERNAME || !SERVICE_PASSWORD) {
+        console.error(
+            "Error: Missing Trader Credentials or Service Credentials.",
+        );
+        return {
+            /* ... error structure ... */
+        };
+    }
+
+    const requestId = Date.now();
+    console.log(
+        `Fetching AKD details for ${traderUsername}, request ID: ${requestId}`,
+    );
+
+    try {
+        console.log(
+            `Attempting SOAP connection to ${WSDL_URL} using SERVICE credentials...`,
+        );
+        console.log(`   Service Username: ${SERVICE_USERNAME}`);
+        console.log(`   Service Password: ${SERVICE_PASSWORD}`);
+
+        const timestamp = new Date().toISOString();
         const client = await soap.createClientAsync(WSDL_URL);
+
+        // --- SET SERVICE AUTHENTICATION ---
+        client.setSecurity(
+            new soap.BasicAuthSecurity(SERVICE_USERNAME, SERVICE_PASSWORD),
+        );
+        console.log("SOAP client created and Service authentication set.");
+
+        // --- Get Data (passing TRADER username) ---
+        const { result: tradingAccounts, primaryAccount } =
+            await getTradingAccounts(client, traderUsername);
+
+        // --- CRITICAL AUTH CHECK ---
+        if (primaryAccount === DEFAULT_ACCOUNT_FALLBACK) {
+            console.error(
+                `Authentication failed for ${traderUsername} (detected via TradAccounts). Aborting further calls. Request ID: ${requestId}`,
+            );
+            return {
+                tradingAccounts,
+                orderHistory: {
+                    headers: ["Status"],
+                    data: [["Authentication Failed"]],
+                },
+                positions: {
+                    headers: ["Status"],
+                    data: [["Authentication Failed"]],
+                },
+                accountInfo: {
+                    headers: ["Status"],
+                    data: [["Authentication Failed"]],
+                },
+                timestamp,
+                dataSource: "error_auth",
+            };
+        }
+        console.log(
+            `Using primary account ${primaryAccount} for subsequent API calls. Request ID: ${requestId}`,
+        );
+
+        // Fetch other details IN PARALLEL for potentially faster loading
+        const [orderHistory, positions, accountInfo, accountStatement] = await Promise.all([
+             getOrderHistory(client, traderUsername, primaryAccount),
+             getPositions(client, traderUsername, primaryAccount),
+             getAccountInfo(client, traderUsername, primaryAccount),
+             getAccountStatement(client, traderUsername, primaryAccount) // <-- ADDED CALL
+         ]);
+
+
         
-        // Add HTTP basic auth header
-        client.addHttpHeader('Authorization', `Basic ${Buffer.from(`${clientUsername}:${clientPassword}`).toString('base64')}`);
-        
-        // Log available methods for debugging
-        console.log("Available SOAP methods:", Object.keys(client).filter(key => typeof client[key] === 'function'));
-        
-        console.log("SOAP client created successfully, beginning API requests...");
-        
-        // Get all trading accounts for the user
-        const { result: tradingAccounts, primaryAccount } = await getTradingAccounts(client, clientUsername);
-        
-        // Use the primary account for subsequent calls
-        const account = primaryAccount;
-        console.log(`Using primary account ${account} for subsequent API calls`);
-        
-        // Get order history
-        const orderHistory = await getOrderHistory(client, clientUsername, account);
-        
-        // Get positions (portfolio holdings)
-        const positions = await getPositions(client, clientUsername, account);
-        
-        // Get account information
-        const accountInfo = await getAccountInfo(client, clientUsername, account);
-        
-        // Data source indicator for debugging
-        const dataSource = 'api';
-        
-        // Combine all results with timestamp to prevent caching
+        const dataSource = "api";
+
+        console.log(
+            `Successfully fetched API data for ${traderUsername}. Request ID: ${requestId}`,
+        );
+        // Log structure summary before returning
+        console.log(
+            `Account details structure: ${JSON.stringify(
+                {
+                    tradingAccounts: {
+                        headers: tradingAccounts.headers,
+                        dataLength: tradingAccounts.data.length,
+                        sampleRow: tradingAccounts.data[0],
+                    },
+                    orderHistory: {
+                        headers: orderHistory.headers,
+                        dataLength: orderHistory.data.length,
+                    },
+                    positions: {
+                        headers: positions.headers,
+                        dataLength: positions.data.length,
+                    },
+                    accountInfo: {
+                        headers: accountInfo.headers,
+                        dataLength: accountInfo.data.length,
+                    },
+                    accountStatement:     {
+                        headers: accountStatement.headers,    
+
+                        dataLength: accountStatement.data.length,
+                    }
+                },
+                null,
+                2,
+            )}`,
+        );
+
         return {
             tradingAccounts,
             orderHistory,
             positions,
             accountInfo,
+             accountStatement,
             timestamp,
-            dataSource
-        };
+            dataSource,
             
-    } catch (error: any) {
-        console.error(`Error in fetchAllAccountDetails for ${clientUsername}: ${error.message}`);
-        console.error(error.stack);
-        
-        // Return fallback data with source indicator
-        const fallbackData = {
-            tradingAccounts: {
-                headers: ["Account", "Name", "Status", "Type", "Balance"],
-                data: [
-                    ["COAF3906", `${clientUsername}`, "Active", "Cash", "PKR 587,210.45"],
-                    ["COAF3907", `${clientUsername}`, "Active", "Margin", "PKR 123,456.78"]
-                ]
-            },
-            orderHistory: {
-                headers: ["Order ID", "Symbol", "Side", "Type", "Quantity", "Price", "Status", "Date"],
-                data: [
-                    ["ORD001", "MARI", "Buy", "Limit", "100", "PKR 1,234.56", "Completed", "2025-03-01"],
-                    ["ORD002", "ENGRO", "Sell", "Market", "50", "PKR 987.65", "Completed", "2025-03-02"],
-                    ["ORD003", "LUCK", "Buy", "Limit", "75", "PKR 567.89", "Rejected", "2025-03-03"]
-                ]
-            },
-            positions: {
-                headers: ["Symbol", "Quantity", "Cost", "Current Value", "Profit/Loss", "Change %"],
-                data: [
-                    ["MARI", "200", "PKR 246,912.00", "PKR 250,000.00", "+PKR 3,088.00", "+1.25%"],
-                    ["ENGRO", "150", "PKR 148,147.50", "PKR 145,000.00", "-PKR 3,147.50", "-2.12%"],
-                    ["LUCK", "100", "PKR 56,789.00", "PKR 60,000.00", "+PKR 3,211.00", "+5.65%"]
-                ]
-            },
-            accountInfo: {
-                headers: ["Detail", "Value"],
-                data: [
-                    ["Account ID", "COAF3906"],
-                    ["Account Type", "Margin"],
-                    ["Account Status", "Active"],
-                    ["Available Funds", "PKR 587,210.45"],
-                    ["Margin Used", "PKR 180,000.00"],
-                    ["Margin Call Level", DEFAULT_MARGIN_CALL_LEVEL],
-                    ["Current Margin Usage", DEFAULT_CURRENT_MARGIN_USAGE]
-                ]
-            },
-            timestamp: new Date().toISOString(),
-            dataSource: 'fallback'
         };
-        
-        return fallbackData;
+    } catch (error: any) {
+        console.error(
+            `Critical Error in fetchAllAccountDetails for ${traderUsername}: ${error.message}. Request ID: ${requestId}`,
+        );
+        console.error(error.stack);
+        if (error.Fault) {
+            console.error("SOAP Fault:", JSON.stringify(error.Fault, null, 2));
+        }
+        const fallbackErrorData = {
+            tradingAccounts: {
+                headers: ["Error"],
+                data: [[`API Failure: ${error.message}`]],
+            },
+            orderHistory: { headers: ["Error"], data: [[`API Failure`]] },
+            positions: { headers: ["Error"], data: [[`API Failure`]] },
+            accountInfo: { headers: ["Error"], data: [[`API Failure`]] },
+            timestamp: new Date().toISOString(),
+            dataSource: "error",
+        };
+        return fallbackErrorData;
     }
 }
 
-async function testConnection(username: string, password: string): Promise<boolean> {
+
+
+
+
+
+
+
+
+async function testConnection(
+    traderUsername: string,
+    traderPassword: string,
+): Promise<boolean> {
+    // Log received TRADER credentials (NO MASKING FOR DEBUG)
+    console.log(
+        `Testing AKD connection for trader: ${traderUsername}, password: ${traderPassword}`,
+    );
+
+    if (!traderUsername || !SERVICE_USERNAME || !SERVICE_PASSWORD) {
+        console.error(
+            "Test Connection Error: Missing Trader or Service credentials.",
+        );
+        return false;
+    }
+
     try {
-        console.log(`Testing AKD connection for ${username}`);
-        // Create SOAP client
+        console.log(
+            `Attempting SOAP connection using SERVICE credentials for test...`,
+        );
+        console.log(`   Service Username: ${SERVICE_USERNAME}`);
+        console.log(`   Service Password: ${SERVICE_PASSWORD}`);
+
         const client = await soap.createClientAsync(WSDL_URL);
-        
-        // Add HTTP basic auth header
-        client.addHttpHeader('Authorization', `Basic ${Buffer.from(`${username}:${password}`).toString('base64')}`);
-        
-        // Try to get trading accounts as a simple test
-        const result = await client.TradAccountsAsync({ userName: username });
-        
-        // If we get here without error, connection is working
-        console.log(`AKD connection test successful for ${username}`);
+        client.setSecurity(
+            new soap.BasicAuthSecurity(SERVICE_USERNAME, SERVICE_PASSWORD),
+        );
+
+        const params = { userName: traderUsername };
+        console.log(`Calling TradAccountsAsync for test with params:`, params);
+        const result = await client.TradAccountsAsync(params);
+        const processed = await processAndUnzipResponse(
+            "TradAccounts_Test",
+            result,
+        );
+
+        if (processed?.toLowerCase() === "not authorized") {
+            console.error(
+                `AKD connection test FAILED for ${traderUsername}: Service authentication passed, but trader call returned 'Not Authorized'.`,
+            );
+            return false;
+        }
+        if (!processed) {
+            console.warn(
+                `AKD connection test WARNING for ${traderUsername}: Service authentication passed, but trader call returned empty/null.`,
+            );
+            return true; // Count as success if no explicit error
+        }
+
+        console.log(`AKD connection test successful for ${traderUsername}.`);
         return true;
     } catch (error: any) {
-        console.error(`AKD connection test failed for ${username}: ${error.message}`);
+        console.error(
+            `AKD connection test FAILED for ${traderUsername}: ${error.message}`,
+        );
+        if (error.Fault) {
+            console.error("SOAP Fault:", JSON.stringify(error.Fault, null, 2));
+        }
         return false;
     }
 }
 
-// External API for broker integration
+// --- Exports ---
 const getAllAccountDetails = fetchAllAccountDetails;
 export { getAllAccountDetails, testConnection };
