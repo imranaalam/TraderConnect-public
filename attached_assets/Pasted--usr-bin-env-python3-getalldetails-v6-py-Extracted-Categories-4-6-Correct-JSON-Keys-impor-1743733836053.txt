@@ -1,0 +1,396 @@
+#!/usr/bin/env python3
+# getalldetails-v6.py - Extracted Categories 4 & 6 (Correct JSON Keys)
+
+import gzip
+import base64
+import requests
+import xml.etree.ElementTree as ET
+from datetime import datetime, timedelta
+import json
+import re # For cleaning keys
+
+from requests.auth import HTTPBasicAuth
+
+from colorama import init, Fore
+from zeep import Client
+from zeep.transports import Transport
+
+# Initialize colorama for automatic color reset
+init(autoreset=True)
+
+# ============================
+# Configuration & Inputs
+# ============================
+HTTP_USERNAME = "myservice"
+HTTP_PASSWORD = "12345678"
+WSDL_URL = "http://online.akdtrade.biz/TradeCastService/LoginServerService?wsdl"
+
+USER_ID = "jawadfoq"
+ACCOUNT = USER_ID # Will be updated by TradAccounts if successful
+
+print("=== Using Hardcoded Inputs for Additional Calls ===")
+ADDITIONAL_ACCOUNT = "COAF3906"
+common_start_date = "Mar 01, 2025"
+common_end_date = "Mar 12, 2025"
+print(f"Additional Account: {ADDITIONAL_ACCOUNT}")
+print(f"Date Range for Additional Calls: {common_start_date} to {common_end_date}")
+
+# ============================
+# Define Key Mappings for known API responses
+# ============================
+# NOTE: Adjust these based on the actual expected columns for each API call
+KEY_MAPPINGS = {
+    "TradAccounts": [
+        'AccountCode', 'AccountTitle', 'BranchCode', 'TraderCode', 'AccountStatus', 'NIC'
+    ],
+    "GetOrderHistory": [
+        'Symbol', 'Quantity', 'Rate', 'Amount', 'Side', 'OrderType', 'OrderDate', 'TradeDate', 'Reference'
+    ],
+    "GetAccountStatement": [
+        'VoucherNo', 'UnknownCol2', 'Date', 'Description', 'Debit', 'Credit', 'Balance' # Need better name for UnknownCol2 if its purpose is known
+    ],
+    "GetCollateral": [
+        'Symbol', 'Quantity', 'TotalQty', 'AvgBuyRate', 'SoldQuantity', 'AvgSellRate', 'MTM_Rate', 'MTMAmount', 'HaircutPercent', 'MarginizedValueRate', 'ValueAfterHaircut', 'PendingSellQty', 'SettledPL', 'UnsettledPL'
+    ],
+    # GetExposureDynamic is handled by a special parser
+}
+
+
+# ============================
+# SOAP Client Setup using Zeep
+# ============================
+session = requests.Session()
+session.auth = HTTPBasicAuth(HTTP_USERNAME, HTTP_PASSWORD)
+transport = Transport(session=session)
+client = Client(wsdl=WSDL_URL, transport=transport)
+
+# ============================
+# Helper Functions (Modified for JSON output with correct keys)
+# ============================
+def process_response(resp):
+    """Processes and decodes/decompresses the response."""
+    if resp is None: return None
+    if isinstance(resp, bytes):
+        if resp.startswith(b"\x1f\x8b"): # Gzip magic number
+            try: return gzip.decompress(resp).decode("utf-8")
+            except Exception: return resp.decode("utf-8", errors="replace")
+        else: return resp.decode("utf-8", errors="replace")
+    return resp
+
+def unzip_string_from_bytes_custom(data):
+    """Decompresses gzip data (bytes or base64 string)."""
+    try:
+        if isinstance(data, (bytes, bytearray)):
+            return gzip.decompress(data).decode("utf-8")
+        else:
+            decoded = base64.b64decode(data)
+            return gzip.decompress(decoded).decode("utf-8")
+    except Exception as e:
+        print(Fore.RED + f"Decompression error: {e}")
+        return ""
+
+def clean_key(key_str):
+    """Cleans a string to be a more suitable JSON key."""
+    if not key_str:
+        return "Unnamed_Key"
+    # Remove potentially problematic characters, replace spaces with underscores
+    cleaned = re.sub(r'[^\w\- ]', '', key_str).strip() # Allow word chars, hyphen, space
+    cleaned = re.sub(r'\s+', '_', cleaned) # Replace spaces with underscores
+    # Handle cases where key might become empty after cleaning
+    return cleaned if cleaned else "Invalid_Key"
+
+
+def parse_response_to_structure(response_str, key_mapping=None):
+    """
+    Convert a pipe/semicolon delimited response string into a list of dictionaries,
+    using provided key_mapping if available.
+    """
+    if not response_str or not response_str.strip(): return []
+    lower_stripped = response_str.strip().lower()
+    if "no record" in lower_stripped or "no data" in lower_stripped: return []
+
+    try:
+        rows = [r.strip() for r in response_str.strip().split("|") if r.strip()]
+        if not rows: return []
+
+        headers_to_use = key_mapping
+        data_rows_str = rows # Assume all rows are data if mapping is provided
+
+        # --- Header Logic Refinement ---
+        # 1. Use key_mapping if provided
+        # 2. If no mapping, try to parse first row as headers
+        # 3. If only one row, use generic Col1, Col2...
+        if not headers_to_use:
+            if len(rows) > 1:
+                # Try parsing first row as headers
+                possible_headers = [clean_key(h.strip()) for h in rows[0].split(";")]
+                # Basic sanity check: if headers look like data (e.g., all numbers), maybe it's not headers
+                is_likely_header = any(re.search('[a-zA-Z]', h) for h in possible_headers)
+
+                if is_likely_header:
+                    headers_to_use = possible_headers
+                    data_rows_str = rows[1:] # Skip first row (headers)
+                    # Handle duplicate parsed headers
+                    used_counts = {}
+                    final_headers = []
+                    for h in headers_to_use:
+                        count = used_counts.get(h, 0) + 1
+                        used_counts[h] = count
+                        final_headers.append(h if count == 1 else f"{h}_{count}")
+                    headers_to_use = final_headers
+                else:
+                    # First row looks like data, use generic headers for all rows
+                    num_cols = len(rows[0].split(";"))
+                    headers_to_use = [f"Col{i+1}" for i in range(num_cols)]
+                    data_rows_str = rows # Use all rows as data
+            elif len(rows) == 1:
+                 # Single row, use generic headers
+                 num_cols = len(rows[0].split(";"))
+                 headers_to_use = [f"Col{i+1}" for i in range(num_cols)]
+                 data_rows_str = rows
+            else: # Should not happen if rows is not empty
+                 return []
+        # --- End Header Logic Refinement ---
+
+        # Check if we determined headers
+        if not headers_to_use:
+             print(Fore.YELLOW + "Warning: Could not determine headers for response.")
+             return [{"raw_row": r} for r in data_rows_str] # Return raw rows if headers fail
+
+        # Process data rows using the determined headers
+        structured_data = []
+        num_headers = len(headers_to_use)
+        for row_str in data_rows_str:
+            cols = [c.strip() for c in row_str.split(";")]
+            # Pad or truncate row data to match header count
+            if len(cols) < num_headers:
+                cols.extend([None] * (num_headers - len(cols)))
+            elif len(cols) > num_headers:
+                cols = cols[:num_headers]
+
+            # Replace "null" string with actual None
+            cleaned_cols = [None if c == 'null' else c for c in cols]
+
+            row_dict = dict(zip(headers_to_use, cleaned_cols))
+            structured_data.append(row_dict)
+
+        return structured_data
+
+    except Exception as e:
+        print(Fore.RED + f"Error parsing response string into structure: {e}")
+        return {"error": "Parsing failed", "raw_response": response_str}
+
+
+def parse_exposure_dynamic(response_str):
+    """Specialized parser for the transposed GetExposureDynamic response."""
+    if not response_str or not response_str.strip(): return []
+    lower_stripped = response_str.strip().lower()
+    if "no record" in lower_stripped or "no data" in lower_stripped: return []
+
+    try:
+        rows = [r.strip() for r in response_str.strip().split("|") if r.strip()]
+        if len(rows) < 2:
+            print(Fore.YELLOW + "Warning: Not enough rows in GetExposureDynamic response for specific parsing. Falling back.")
+            # Fallback to generic parser if structure is unexpected
+            return parse_response_to_structure(response_str)
+
+        # First row contains market names (headers for the columns)
+        market_headers_raw = [h.strip() for h in rows[0].split(";")]
+        if not market_headers_raw or market_headers_raw[0].lower().strip() != 'market name':
+             print(Fore.YELLOW + "Warning: Unexpected header format in GetExposureDynamic. Falling back.")
+             return parse_response_to_structure(response_str)
+
+        # Clean the market names to be used as keys
+        market_keys = [clean_key(mh) for mh in market_headers_raw[1:]]
+
+        structured_data = []
+        # Process subsequent rows, where first column is the metric name
+        for row_str in rows[1:]:
+            cols = [c.strip() for c in row_str.split(";")]
+            if not cols: continue
+
+            metric_name_raw = cols[0]
+            # Clean the metric name (first column value) to be a key
+            metric_key = clean_key(metric_name_raw)
+
+            metric_values = [ (None if v == 'null' else v) for v in cols[1:] ] # Handle "null" string
+
+            # Pad or truncate values
+            if len(metric_values) < len(market_keys):
+                metric_values.extend([None] * (len(market_keys) - len(metric_values)))
+            elif len(metric_values) > len(market_keys):
+                metric_values = metric_values[:len(market_keys)]
+
+            # Create dictionary for this metric
+            # Use the *cleaned* metric name as the primary identifier key
+            row_dict = {"Metric": metric_name_raw} # Keep original name for readability
+            row_dict.update(dict(zip(market_keys, metric_values)))
+            structured_data.append(row_dict)
+
+        return structured_data
+
+    except Exception as e:
+        print(Fore.RED + f"Error parsing GetExposureDynamic response: {e}")
+        return {"error": "GetExposureDynamic parsing failed", "raw_response": response_str}
+
+
+def print_input_and_output(op_name, params, resp, specific_parser=None, key_mapping=None):
+    """
+    Print the function call details and its output in JSON format.
+    Uses specific_parser if provided, otherwise uses parse_response_to_structure with key_mapping.
+    """
+    print(f"\nFunction call: {op_name}")
+    print("┌─── Inputs ──────────────────────────────┐")
+    print(json.dumps(params, indent=2))
+    print("└──────────────────────────────────────────┘")
+
+    processed = process_response(resp)
+    print("Output:")
+
+    output_data = None
+    if processed is None:
+        output_data = None
+    elif isinstance(processed, bool):
+        output_data = processed
+    elif isinstance(processed, str):
+        if specific_parser:
+            output_data = specific_parser(processed)
+        elif "|" in processed and ";" in processed:
+            # Use generic parser with key_mapping if available
+            output_data = parse_response_to_structure(processed, key_mapping)
+        else:
+            # Simple string response
+            output_data = {"value": processed}
+    else:
+        # Should ideally not happen with this API, but handle other types
+        output_data = processed # Attempt to dump directly
+
+    # Print the final structured data as JSON
+    try:
+        print(json.dumps(output_data, indent=4))
+    except TypeError as e:
+         print(Fore.RED + f"Error: Could not serialize output to JSON for {op_name}. Type: {type(output_data)}, Error: {e}")
+         print(json.dumps({"error": "Output could not be serialized to JSON", "raw_output": str(output_data)}))
+
+
+def extract_account_numbers(structured_data, account_key='AccountCode'):
+    """
+    Extract account numbers from structured data using the specified key.
+    """
+    account_numbers = []
+    if not isinstance(structured_data, list) or not structured_data:
+        return account_numbers
+
+    try:
+        for item in structured_data:
+            if isinstance(item, dict) and account_key in item:
+                 account_num = item.get(account_key)
+                 if account_num:
+                      account_numbers.append(str(account_num).strip())
+    except Exception as e:
+        print(Fore.RED + f"Error extracting account numbers using key '{account_key}': {e}")
+
+    return account_numbers
+
+# ============================
+# Category 4: Trading Accounts & Transactions
+# ============================
+print("\n=== Category 4: Trading Accounts & Transactions ===")
+default_account = None
+account_numbers = []
+try:
+    op = "TradAccounts"
+    params = {"userName": USER_ID}
+    trad_accounts_resp = client.service.TradAccounts(**params)
+    # Process, parse with mapping, THEN extract account number
+    processed_trad_accounts = process_response(trad_accounts_resp)
+    structured_trad_accounts = parse_response_to_structure(processed_trad_accounts, KEY_MAPPINGS.get(op))
+
+    # Print Input/Output using the *structured* data
+    print(f"\nFunction call: {op}")
+    print("┌─── Inputs ──────────────────────────────┐")
+    print(json.dumps(params, indent=2))
+    print("└──────────────────────────────────────────┘")
+    print("Output:")
+    print(json.dumps(structured_trad_accounts, indent=4)) # Print the already parsed data
+
+    # Extract account number using the correct key
+    account_numbers = extract_account_numbers(structured_trad_accounts, 'AccountCode')
+    if account_numbers:
+        default_account = account_numbers[0]
+        print(f"\nUsing default account: {default_account}")
+        ACCOUNT = default_account
+    else:
+        print(Fore.YELLOW + "No account numbers found from TradAccounts. Using initial ACCOUNT value:", ACCOUNT)
+except Exception as e:
+    print(Fore.RED + f"Error calling TradAccounts or processing its response: {e}")
+    print(json.dumps({"error": f"TradAccounts failed: {e}"}))
+    print(Fore.YELLOW + "Proceeding with initial ACCOUNT value:", ACCOUNT)
+
+
+# Additional GetOrderHistory (Use mapping)
+try:
+    op = "GetOrderHistory" # Use base name for mapping lookup
+    op_display_name = "GetOrderHistory (Additional)"
+    params = {
+        "trader": USER_ID, "accountNo": ADDITIONAL_ACCOUNT, "pincode": "",
+        "scrip": "ALL", "type": "ALL", "startDate": common_start_date,
+        "endDate": common_end_date, "from": "OrderHistory"
+    }
+    response = client.service.GetOrderHistory(**params)
+    print_input_and_output(op_display_name, params, response, key_mapping=KEY_MAPPINGS.get(op))
+except Exception as e:
+    print(Fore.RED + f"Error in Additional {op} call: {e}")
+    print(json.dumps({"error": f"Additional {op} failed: {e}"}))
+
+
+# Additional GetAccountStatement call (Use mapping)
+try:
+    op = "GetAccountStatement" # Use base name for mapping lookup
+    op_display_name = "GetAccountStatement (Additional)"
+    params = {
+        "userName": USER_ID, "accountNo": ADDITIONAL_ACCOUNT,
+        "startDate": common_start_date, "endDate": common_end_date,
+        "from": "TradeCast"
+    }
+    response = client.service.GetAccountStatement(**params)
+    print_input_and_output(op_display_name, params, response, key_mapping=KEY_MAPPINGS.get(op))
+except Exception as e:
+    print(Fore.RED + f"Error in Additional {op} call: {e}")
+    print(json.dumps({"error": f"Additional {op} failed: {e}"}))
+
+
+# ============================
+# Category 6: Risk Management & Exposure
+# ============================
+print("\n=== Category 6: Risk Management & Exposure ===")
+account_determined = ACCOUNT and ACCOUNT != USER_ID or (ACCOUNT == USER_ID and default_account is not None)
+
+if not account_determined:
+    reason = "Default ACCOUNT could not be determined from TradAccounts." if ACCOUNT == USER_ID else "ACCOUNT variable is not set."
+    print(Fore.YELLOW + f"Skipping Category 6 calls: {reason}")
+    print(json.dumps({"warning": "Skipped Category 6", "reason": reason}))
+else:
+    # GetExposureDynamic (Use special parser)
+    try:
+        op = "GetExposureDynamic"
+        params = {"UserID": USER_ID, "account": ACCOUNT, "approved": "0"}
+        resp = client.service.GetExposureDynamic(**params)
+        # Pass the specific parser function here
+        print_input_and_output(op, params, resp, specific_parser=parse_exposure_dynamic)
+    except Exception as e:
+        print(Fore.RED + f"Error calling GetExposureDynamic: {e}")
+        print(json.dumps({"error": f"GetExposureDynamic failed: {e}"}))
+
+    # GetCollateral (Use mapping)
+    try:
+        op = "GetCollateral"
+        params = {"UserID": USER_ID, "Account": ACCOUNT}
+        resp = client.service.GetCollateral(**params)
+        print_input_and_output(op, params, resp, key_mapping=KEY_MAPPINGS.get(op))
+    except Exception as e:
+        print(Fore.RED + f"Error calling GetCollateral: {e}")
+        print(json.dumps({"error": f"GetCollateral failed: {e}"}))
+
+print("\n=== Script Finished ===")
+
