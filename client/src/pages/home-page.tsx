@@ -1,4 +1,3 @@
-
 import { useQuery } from "@tanstack/react-query";
 import { Link, useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
@@ -26,6 +25,15 @@ export default function HomePage() {
     },
   });
 
+  const { data: brokers } = useQuery({ // Added brokers query
+    queryKey: ["/api/brokers"],
+    queryFn: async () => {
+      const res = await apiRequest("GET", "/api/brokers");
+      return res.json();
+    },
+  });
+
+
   // Refresh data when page becomes visible
   useEffect(() => {
     const handleVisibilityChange = () => {
@@ -45,7 +53,7 @@ export default function HomePage() {
       {connections && connections.length > 0 ? (
         connections.map((connection: any) => {
           const exchange = exchanges?.find(e => e.id === connection.exchangeId);
-          
+
           return (
             <Card 
               key={connection.id} 
@@ -62,7 +70,7 @@ export default function HomePage() {
                       <div className="space-y-1">
                         <div>Account: {connection.accountId || connection.credentials?.accountNumber || 'N/A'}</div>
                         <div>User ID: {connection.credentials?.username || 'N/A'}</div>
-                        <div>Connection Type: {connection.authMethod === 'api' ? 'API' : 'Credentials'}</div>
+                        <div>Broker: {brokers?.find(b => b.id === connection.brokerId)?.name || 'N/A'}</div> {/* Added Broker information */}
                       </div>
                     </CardDescription>
                   </div>

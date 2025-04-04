@@ -89,12 +89,12 @@ export default function ExchangeConnectPage() {
     onSuccess: (connection) => {
       // Make sure to fully invalidate the connections query cache
       queryClient.invalidateQueries({ queryKey: ["/api/connections"] });
-      
+
       toast({
         title: "Connection successful",
         description: "You have successfully connected to the exchange",
       });
-      
+
       // Short delay to ensure query invalidation completes before redirecting
       setTimeout(() => {
         setLocation(`/dashboard/${connection.id}`);
@@ -108,12 +108,12 @@ export default function ExchangeConnectPage() {
       });
     },
   });
-  
+
   // Test connection mutation
   const testConnectionMutation = useMutation({
     mutationFn: async (data: ConnectionTest) => {
       const res = await apiRequest("POST", "/api/test-connection", data);
-      return await res.json();
+      return res.json();
     },
     onSuccess: () => {
       setConnectionStatus('success');
@@ -122,6 +122,7 @@ export default function ExchangeConnectPage() {
         title: "Connection test successful",
         description: "Your credentials were verified successfully",
       });
+      window.location.href = '/'; // Redirect after successful test
     },
     onError: (error: any) => {
       setConnectionStatus('failed');
@@ -174,7 +175,7 @@ export default function ExchangeConnectPage() {
   function prepareConnectionData(data: FormValues): { credentials: Record<string, string>, connectionData: ConnectionRequest } {
     // Prepare credentials object based on auth method
     let credentials = {};
-    
+
     if (data.authMethod === "api") {
       credentials = {
         apiKey: data.apiKey,
@@ -203,7 +204,7 @@ export default function ExchangeConnectPage() {
   function testConnection() {
     const formData = form.getValues();
     const isValid = form.trigger();
-    
+
     if (!isValid) {
       toast({
         title: "Validation Error",
@@ -212,7 +213,7 @@ export default function ExchangeConnectPage() {
       });
       return;
     }
-    
+
     const { connectionData } = prepareConnectionData(formData);
     setConnectionStatus('testing');
     testConnectionMutation.mutate(connectionData as ConnectionTest);
@@ -228,7 +229,7 @@ export default function ExchangeConnectPage() {
       });
       return;
     }
-    
+
     const { connectionData } = prepareConnectionData(data);
     connectionMutation.mutate(connectionData);
   }
@@ -278,7 +279,7 @@ export default function ExchangeConnectPage() {
                   </div>
                 )}
               </div>
-              
+
               <div className="space-y-4 mt-6">
                 <div className="flex items-center text-sm text-neutral-700">
                   <BoltIcon className="h-5 w-5 text-primary mr-2" />
@@ -303,7 +304,7 @@ export default function ExchangeConnectPage() {
             <CardContent className="pt-6 auth-form-container">
               <div>
                 <h2 className="text-xl font-medium text-neutral-900 mb-6">Connect to Exchange or Broker</h2>
-                
+
                 <Form {...form}>
                   <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
                     {/* Market Type Selection */}
@@ -422,7 +423,7 @@ export default function ExchangeConnectPage() {
                     {/* Authentication Method */}
                     <div className="border-t border-neutral-200 pt-4">
                       <h3 className="text-sm font-medium text-neutral-900 mb-3">Authentication Method</h3>
-                      
+
                       <FormField
                         control={form.control}
                         name="authMethod"
@@ -430,19 +431,19 @@ export default function ExchangeConnectPage() {
                           // Determine available auth methods based on broker or exchange
                           const selectedBrokerId = form.watch("brokerId");
                           const selectedBroker = selectedBrokerId ? brokers?.find(b => b.id.toString() === selectedBrokerId) : null;
-                          
+
                           // Use broker's auth methods if available, otherwise use default options
                           const authMethods = selectedBroker?.authMethods || ['api', 'credentials'];
                           const showApiOption = authMethods.includes('api');
                           const showCredentialsOption = authMethods.includes('credentials');
-                          
+
                           // If current selected auth method isn't supported by this broker, switch to first available
                           useEffect(() => {
                             if (selectedBroker && authMethods.length > 0 && !authMethods.includes(field.value)) {
                               field.onChange(authMethods[0]);
                             }
                           }, [selectedBrokerId, field, authMethods]);
-                          
+
                           return (
                             <FormItem className="space-y-3">
                               <div className="flex justify-between">
@@ -588,7 +589,7 @@ export default function ExchangeConnectPage() {
                       >
                         {testConnectionMutation.isPending ? "Testing..." : "Test Connection"}
                       </Button>
-                      
+
                       <Button 
                         type="submit" 
                         className="flex-1" 

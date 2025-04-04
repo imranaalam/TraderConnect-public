@@ -68,6 +68,10 @@ export default function AuthPage() {
     loginMutation.mutate({
       username: data.username,
       password: data.password,
+    }, {
+      onSuccess: () => {
+        window.location.href = '/';
+      }
     });
   }
 
