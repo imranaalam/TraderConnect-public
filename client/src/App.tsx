@@ -13,7 +13,7 @@ function Router() {
   return (
     <Switch>
       <Route path="/auth" component={AuthPage} />
-      <ProtectedRoute path="/" component={ConnectedDashboardPage} />
+      <ProtectedRoute path="/" exact component={HomePage} />
       <ProtectedRoute path="/connect" component={ExchangeConnectPage} />
       <ProtectedRoute path="/dashboard/:id" component={ConnectedDashboardPage} />
       <Route component={NotFound} />

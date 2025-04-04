@@ -98,7 +98,7 @@ export default function ConnectedDashboardPage() {
   const [_, setLocation] = useLocation();
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [credentials, setCredentials] = useState<Record<string, string>>({});
-  const [showAccountDetails, setShowAccountDetails] = useState(false);
+  const [showAccountDetails, setShowAccountDetails] = useState(true);
   const [isLoadingDetails, setIsLoadingDetails] = useState(false); // Renamed for clarity
 
   // Fetch connection details
