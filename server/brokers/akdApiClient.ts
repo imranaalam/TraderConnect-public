@@ -386,7 +386,7 @@ async function getTradingAccounts(client: any, userId: string) {
         console.log("Raw trading accounts result:", JSON.stringify(result, null, 2));
         
         // Extract the response data properly
-        const rawResponse = result[0]?.TradAccountsResult ?? result[0] ?? null;
+        const rawResponse = result[0]?.TradAccountsResult ?? result[0]?.return ?? result[0] ?? null;
         console.log("Extracted raw response:", rawResponse);
         
         // Process and decompress the response
@@ -400,8 +400,11 @@ async function getTradingAccounts(client: any, userId: string) {
         if (structuredData.length > 0) {
             // Transform structured data to match expected output format
             const dataOut: string[][] = structuredData.map(item => {
-                const account = String(item.AccountCode || "");
-                const name = String(item.AccountTitle || "");
+                // Convert everything to strings to avoid [object Object] issues
+                const account = item.AccountCode !== null && item.AccountCode !== undefined ? 
+                                String(item.AccountCode) : "";
+                const name = item.AccountTitle !== null && item.AccountTitle !== undefined ? 
+                             String(item.AccountTitle) : "";
                 const status = DEFAULT_TRADING_ACCOUNT_STATUS;
                 
                 // Simple logic based on example output
@@ -464,22 +467,22 @@ async function getOrderHistory(client: any, userId: string, accountNo: string, s
     // Setup for output
     const targetHeaders = ["Order ID", "Symbol", "Side", "Type", "Quantity", "Price", "Status", "Date"];
     const sampleData = [
-        ["ORD001", "MARI", "Buy", "Limit", "100", "PKR 1,234.56", "Completed", "2025-03-01"],
+        ["ORD001", "MARI", "Buy", DEFAULT_ORDER_TYPE, "100", "PKR 1,234.56", "Completed", "2025-03-01"],
         ["ORD002", "ENGRO", "Sell", "Market", "50", "PKR 987.65", "Completed", "2025-03-02"],
-        ["ORD003", "LUCK", "Buy", "Limit", "75", "PKR 567.89", "Rejected", "2025-03-03"]
+        ["ORD003", "LUCK", "Buy", DEFAULT_ORDER_TYPE, "75", "PKR 567.89", "Rejected", "2025-03-03"]
     ];
 
     try {
-        // Prepare API call parameters
+        // Prepare API call parameters 
         const params = {
             trader: userId,
             accountNo: accountNo,
-            pincode: "",
-            scrip: "ALL",
-            type: "ALL",
+            pincode: "",  // Optional in some implementations
+            scrip: "ALL", // Get all scripts/symbols
+            type: "ALL",  // Get all order types
             startDate: startDate,
             endDate: endDate,
-            'from': "OrderHistory" // Handle reserved keyword 'from'
+            from: "OrderHistory"  // Specify we want order history
         };
         
         // Make the SOAP API call
@@ -487,7 +490,7 @@ async function getOrderHistory(client: any, userId: string, accountNo: string, s
         console.log("Raw order history result:", JSON.stringify(result, null, 2));
         
         // Extract response data
-        const rawResponse = result[0]?.GetOrderHistoryResult ?? result[0] ?? null;
+        const rawResponse = result[0]?.GetOrderHistoryResult ?? result[0]?.return ?? result[0] ?? null;
         
         // Process and decompress
         const processed = await processAndUnzipResponse(rawResponse);
@@ -499,30 +502,31 @@ async function getOrderHistory(client: any, userId: string, accountNo: string, s
         
         if (structuredData.length > 0) {
             // Transform structured data to match expected output format
-            const dataOut: string[][] = structuredData.map((item, index) => {
-                const orderId = `ORD${String(index + 1).padStart(3, '0')}`;
-                const symbol = String(item.Symbol || "");
-                const side = String(item.Side || "").charAt(0).toUpperCase() + 
-                             String(item.Side || "").slice(1).toLowerCase();
-                const orderType = DEFAULT_ORDER_TYPE;
-                const quantity = String(item.Quantity || "");
-                const price = formatPkr(item.Rate || 0);
+            const dataOut: string[][] = structuredData.map(item => {
+                // Generate a fake order ID if none exists
+                const orderId = `ORD${Math.floor(Math.random() * 10000).toString().padStart(4, '0')}`;
                 
-                // Determine status from reference or other fields
-                let status = "Completed"; // Default 
-                const rawStatus = String(item.Reference || "").toLowerCase();
-                if (rawStatus.includes('reject') || rawStatus.includes('error')) {
-                    status = "Rejected";
-                } else if (rawStatus.includes('cancel')) {
-                    status = "Cancelled";
-                } else if (rawStatus.includes('pending') || rawStatus.includes('open')) {
-                    status = "Pending";
+                const symbol = String(item.Symbol || "");
+                const side = String(item.Side || "Buy");
+                const type = String(item.OrderType || DEFAULT_ORDER_TYPE);
+                const quantity = String(item.Quantity || "0");
+                
+                // Format the price
+                let price = "PKR 0.00";
+                if (item.Rate) {
+                    price = formatPkr(item.Rate);
                 }
                 
-                // Format date
-                const formattedDate = parseDateFlexible(item.OrderDate || "");
+                // Status might not be directly available
+                const status = "Completed"; // Assume completed
                 
-                return [orderId, symbol, side, orderType, quantity, price, status, formattedDate];
+                // Format date if available
+                let date = parseDateFlexible(String(item.OrderDate || ""));
+                if (!date && item.TradeDate) {
+                    date = parseDateFlexible(String(item.TradeDate));
+                }
+                
+                return [orderId, symbol, side, type, quantity, price, status, date];
             });
             
             console.log(`Order History fetched successfully. Items: ${dataOut.length}`);
@@ -561,49 +565,51 @@ async function getPositions(client: any, userId: string, accountNo: string) {
             pincode: "",
         };
         
-        // Make the SOAP API call to ListHolding
-        const result = await client.ListHoldingAsync(params);
-        console.log("Raw positions result:", JSON.stringify(result, null, 2));
-        
-        // Extract response data
-        const rawResponse = result[0]?.ListHoldingResult ?? result[0] ?? null;
-        
-        // Process and decompress
-        const processed = await processAndUnzipResponse(rawResponse);
-        console.log("Processed positions response:", processed);
-        
-        // Parse using our structured parser with column mapping for GetCollateral
-        // (ListHolding and GetCollateral have similar structures)
-        const structuredData = parseResponseToStructure(processed, KEY_MAPPINGS.GetCollateral);
-        console.log("Structured position data:", JSON.stringify(structuredData, null, 2));
-        
-        if (structuredData.length > 0) {
-            // Transform structured data to match expected output format
-            const dataOut: string[][] = structuredData.map(item => {
-                const symbol = String(item.Symbol || "");
-                const quantity = String(item.Quantity || "0");
-                
-                // Parse numeric values for calculations
-                const costRaw = parseFloat(String(item.AvgBuyRate || 0).replace(/[^\d.-]/g, '') || '0') * 
-                               parseFloat(quantity);
-                const valueRaw = parseFloat(String(item.MTM_Rate || 0).replace(/[^\d.-]/g, '') || '0') * 
-                                parseFloat(quantity);
-                
-                // Calculate P/L
-                const plValue = valueRaw - costRaw;
-                const plPercent = costRaw !== 0 ? (plValue / costRaw) * 100 : 0;
-                
-                // Format for display
-                const cost = formatPkr(costRaw);
-                const value = formatPkr(valueRaw);
-                const pl = formatPkrSigned(plValue);
-                const plPercentStr = `${plValue >= 0 ? '+' : ''}${plPercent.toFixed(2)}%`;
-                
-                return [symbol, quantity, cost, value, pl, plPercentStr];
-            });
+        // Check if GetCollateralAsync exists, otherwise use fallback
+        if (typeof client.GetCollateralAsync === 'function') {
+            // Make the SOAP API call to GetCollateral instead of ListHolding 
+            const result = await client.GetCollateralAsync(params);
+            console.log("Raw positions result:", JSON.stringify(result, null, 2));
             
-            console.log(`Positions fetched successfully. Items: ${dataOut.length}`);
-            return { headers: targetHeaders, data: dataOut };
+            // Extract response data
+            const rawResponse = result[0]?.GetCollateralResult ?? result[0]?.return ?? result[0] ?? null;
+            
+            // Process and decompress
+            const processed = await processAndUnzipResponse(rawResponse);
+            console.log("Processed positions response:", processed);
+            
+            // Parse using our structured parser with column mapping for GetCollateral
+            const structuredData = parseResponseToStructure(processed, KEY_MAPPINGS.GetCollateral);
+            console.log("Structured position data:", JSON.stringify(structuredData, null, 2));
+            
+            if (structuredData.length > 0) {
+                // Transform structured data to match expected output format
+                const dataOut: string[][] = structuredData.map(item => {
+                    const symbol = String(item.Symbol || "");
+                    const quantity = String(item.Quantity || "0");
+                    
+                    // Parse numeric values for calculations
+                    const costRaw = parseFloat(String(item.AvgBuyRate || 0).replace(/[^\d.-]/g, '') || '0') * 
+                                parseFloat(quantity);
+                    const valueRaw = parseFloat(String(item.MTM_Rate || 0).replace(/[^\d.-]/g, '') || '0') * 
+                                    parseFloat(quantity);
+                    
+                    // Calculate P/L
+                    const plValue = valueRaw - costRaw;
+                    const plPercent = costRaw !== 0 ? (plValue / costRaw) * 100 : 0;
+                    
+                    // Format for display
+                    const cost = formatPkr(costRaw);
+                    const value = formatPkr(valueRaw);
+                    const pl = formatPkrSigned(plValue);
+                    const plPercentStr = `${plValue >= 0 ? '+' : ''}${plPercent.toFixed(2)}%`;
+                    
+                    return [symbol, quantity, cost, value, pl, plPercentStr];
+                });
+                
+                console.log(`Positions fetched successfully. Items: ${dataOut.length}`);
+                return { headers: targetHeaders, data: dataOut };
+            }
         }
         
         // If no data found or transform failed, use sample data
@@ -642,23 +648,49 @@ async function getAccountInfo(client: any, userId: string, accountNo: string) {
             pincode: "",
         };
         
-        // Make the SOAP API call - try GetAccountDetail or similar
-        const result = await client.GetAccountDetailAsync(params);
-        console.log("Raw account info result:", JSON.stringify(result, null, 2));
-        
-        // Extract response data
-        const rawResponse = result[0]?.GetAccountDetailResult ?? result[0] ?? null;
-        
-        // Process and decompress
-        const processed = await processAndUnzipResponse(rawResponse);
-        console.log("Processed account info:", processed);
-        
-        // Parse using a generic parser (no specific mapping for account details)
-        const structuredData = parseResponseToStructure(processed);
-        console.log("Structured account info:", JSON.stringify(structuredData, null, 2));
+        // Check if GetAccountDetailAsync exists, use an alternative if not available
+        if (typeof client.GetAccountDetailAsync === 'function') {
+            // Make the SOAP API call to GetAccountDetail 
+            const result = await client.GetAccountDetailAsync(params);
+            console.log("Raw account info result:", JSON.stringify(result, null, 2));
+            
+            // Extract response data
+            const rawResponse = result[0]?.GetAccountDetailResult ?? result[0]?.return ?? result[0] ?? null;
+            
+            // Process and decompress
+            const processed = await processAndUnzipResponse(rawResponse);
+            console.log("Processed account info:", processed);
+            
+            // Parse using a generic parser (no specific mapping for account details)
+            const structuredData = parseResponseToStructure(processed);
+            console.log("Structured account info:", JSON.stringify(structuredData, null, 2));
+            
+            if (structuredData.length > 0) {
+                // TODO: Transform structured data to match expected output format when API returns real data
+                // For now, we'll still use the sample data but log that we're doing so
+                console.log("Account info API returned data but using sample data for display consistency");
+            }
+        } else if (typeof client.GetAccountStatementAsync === 'function') {
+            // Try an alternative method if available
+            console.log("GetAccountDetailAsync not available, trying GetAccountStatementAsync instead");
+            
+            // Different params for account statement 
+            const statementParams = {
+                trader: userId,
+                accountNo: accountNo,
+                startDate: COMMON_START_DATE,
+                endDate: COMMON_END_DATE
+            };
+            
+            const result = await client.GetAccountStatementAsync(statementParams);
+            // Process similarly to above...
+            console.log("Account statement fetched as alternative to account details");
+        } else {
+            console.warn("No suitable account info API methods found");
+        }
         
         // For now, use sample data while testing
-        // This API endpoint might need more specialized parsing based on actual response
+        console.warn(`Using sample account data for ${userId} until complete API integration`);
         return { headers: targetHeaders, data: sampleData };
         
     } catch (error: any) {
@@ -680,6 +712,9 @@ async function fetchAllAccountDetails(clientUsername: string, clientPassword: st
         
         // Add HTTP basic auth header
         client.addHttpHeader('Authorization', `Basic ${Buffer.from(`${clientUsername}:${clientPassword}`).toString('base64')}`);
+        
+        // Log available methods for debugging
+        console.log("Available SOAP methods:", Object.keys(client).filter(key => typeof client[key] === 'function'));
         
         console.log("SOAP client created successfully, beginning API requests...");
         
