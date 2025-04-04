@@ -23,7 +23,7 @@ export default function Header() {
               <nav className="hidden md:ml-6 md:flex md:space-x-8">
                 <Link href="/">
                   <span className={`${location === "/" ? 'border-primary text-primary' : 'border-transparent text-neutral-500 hover:border-neutral-300 hover:text-neutral-700'} border-b-2 px-1 pt-1 pb-3 text-sm font-medium cursor-pointer`}>
-                    Connected Dashboard
+                    Accounts
                   </span>
                 </Link>
                 <Link href="/connect">
