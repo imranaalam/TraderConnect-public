@@ -1,0 +1,154 @@
+
+2:36:36 AM [express] serving on port 5000
+Browserslist: browsers data (caniuse-lite) is 6 months old. Please run:
+  npx update-browserslist-db@latest
+  Why you should do it regularly: https://github.com/browserslist/update-db#readme
+2:36:44 AM [express] GET /api/user 401 in 3ms
+2:36:46 AM [express] GET /api/user 401 in 1ms
+2:37:08 AM [express] POST /api/login 200 in 375ms :: {"username":"demo","password":"3e3c741f83418619…
+2:37:14 AM [express] GET /api/user 200 in 1ms :: {"username":"demo","password":"3e3c741f83418619d8a1…
+2:37:15 AM [express] GET /api/connections 200 in 2ms :: []
+2:37:15 AM [express] GET /api/exchanges 200 in 2ms :: [{"name":"Binance","type":"spot","marketType":…
+2:37:24 AM [express] GET /api/exchanges 200 in 2ms :: [{"name":"Binance","type":"spot","marketType":…
+2:37:28 AM [express] GET /api/brokers/8 200 in 1ms :: [{"name":"AKD","exchangeId":8,"authMethods":["…
+Attempting to connect to AKD using username: jawadfoq
+Testing AKD connection for jawadfoq
+AKD connection test successful for jawadfoq
+2:38:02 AM [express] POST /api/test-connection 200 in 2088ms :: {"success":true}
+Creating new connection for user 1
+2:38:05 AM [express] POST /api/connections 201 in 2ms :: {"userId":1,"exchangeId":8,"brokerId":11,"a…
+2:38:12 AM [express] GET /api/user 304 in 3ms :: {"username":"demo","password":"3e3c741f83418619d8a1…
+2:38:13 AM [express] GET /api/connections 200 in 11ms :: [{"userId":1,"exchangeId":8,"brokerId":11,"…
+2:38:13 AM [express] GET /api/exchanges 304 in 3ms :: [{"name":"Binance","type":"spot","marketType":…
+2:38:15 AM [express] GET /api/connections/1 200 in 1ms :: {"userId":1,"exchangeId":8,"brokerId":11,"…
+2:38:15 AM [express] GET /api/brokers 200 in 5ms
+Credentials received for AKD connection: {"username":"jawadfoq","password":"******","fields":["username","password","accountNumber","pin"]}
+Fetching AKD details for jawadfoq, request ID: 1743734300234
+Attempting to connect to AKD using username: jawadfoq
+SOAP client created successfully, beginning API requests...
+Fetching trading accounts for user jawadfoq...
+Raw trading accounts result: [
+  {
+    "return": "Tm90IEF1dGhvcml6ZWQ="
+  },
+  "<?xml version='1.0' encoding='UTF-8'?><S:Envelope xmlns:S=\"http://schemas.xmlsoap.org/soap/envelope/\"><S:Body><ns2:TradAccountsResponse xmlns:ns2=\"http://login/\"><return>Tm90IEF1dGhvcml6ZWQ=</return></ns2:TradAccountsResponse></S:Body></S:Envelope>",
+  null,
+  "<?xml version=\"1.0\" encoding=\"utf-8\"?><soap:Envelope xmlns:soap=\"http://schemas.xmlsoap.org/soap/envelope/\" xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\"  xmlns:wsu=\"http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-utility-1.0.xsd\" xmlns:tns=\"http://login/\"><soap:Body><tns:TradAccounts><userName>jawadfoq</userName></tns:TradAccounts></soap:Body></soap:Envelope>",
+  null
+]
+Extracted raw response: { return: 'Tm90IEF1dGhvcml6ZWQ=' }
+Processed response: [object Object]
+Structured account data: [
+  {
+    "AccountCode": "[object Object]",
+    "AccountTitle": null,
+    "BranchCode": null,
+    "TraderCode": null,
+    "AccountStatus": null,
+    "NIC": null
+  }
+]
+Trading Accounts fetched successfully. Primary Account: [object Object]
+Final trading account data: [
+  [
+    "[object Object]",
+    "",
+    "Active",
+    "Margin",
+    "PKR ?"
+  ]
+]
+Using primary account [object Object] for subsequent API calls
+Fetching order history for user jawadfoq, account [object Object]...
+Raw order history result: [
+  {
+    "return": "Tm90IEF1dGhvcml6ZWQ="
+  },
+  "<?xml version='1.0' encoding='UTF-8'?><S:Envelope xmlns:S=\"http://schemas.xmlsoap.org/soap/envelope/\"><S:Body><ns2:GetOrderHistoryResponse xmlns:ns2=\"http://login/\"><return>Tm90IEF1dGhvcml6ZWQ=</return></ns2:GetOrderHistoryResponse></S:Body></S:Envelope>",
+  null,
+  "<?xml version=\"1.0\" encoding=\"utf-8\"?><soap:Envelope xmlns:soap=\"http://schemas.xmlsoap.org/soap/envelope/\" xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\"  xmlns:wsu=\"http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-utility-1.0.xsd\" xmlns:tns=\"http://login/\"><soap:Body><tns:GetOrderHistory><trader>jawadfoq</trader><accountNo>[object Object]</accountNo><pincode></pincode><scrip>ALL</scrip><type>ALL</type><startDate>Mar 01, 2025</startDate><endDate>Mar 12, 2025</endDate><from>OrderHistory</from></tns:GetOrderHistory></soap:Body></soap:Envelope>",
+  null
+]
+Processed order history: [object Object]
+Structured order data: [
+  {
+    "Symbol": "[object Object]",
+    "Quantity": null,
+    "Rate": null,
+    "Amount": null,
+    "Side": null,
+    "OrderType": null,
+    "OrderDate": null,
+    "TradeDate": null,
+    "Reference": null
+  }
+]
+Order History fetched successfully. Items: 1
+Fetching positions for user jawadfoq, account [object Object]...
+Error fetching positions for jawadfoq: client.ListHoldingAsync is not a function
+TypeError: client.ListHoldingAsync is not a function
+    at getPositions (/home/runner/workspace/server/brokers/akdApiClient.ts:565:37)
+    at fetchAllAccountDetails (/home/runner/workspace/server/brokers/akdApiClient.ts:697:33)
+    at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+    at async getAKDAccountDetails (/home/runner/workspace/server/routes.ts:485:30)
+    at async <anonymous> (/home/runner/workspace/server/routes.ts:448:26)
+Fetching account info for user jawadfoq, account [object Object]...
+Error fetching account info for jawadfoq: client.GetAccountDetailAsync is not a function
+TypeError: client.GetAccountDetailAsync is not a function
+    at getAccountInfo (/home/runner/workspace/server/brokers/akdApiClient.ts:646:37)
+    at fetchAllAccountDetails (/home/runner/workspace/server/brokers/akdApiClient.ts:700:35)
+    at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+    at async getAKDAccountDetails (/home/runner/workspace/server/routes.ts:485:30)
+    at async <anonymous> (/home/runner/workspace/server/routes.ts:448:26)
+Successfully fetched actual AKD data for jawadfoq
+Account details structure: {
+  "tradingAccounts": {
+    "headers": [
+      "Account",
+      "Name",
+      "Status",
+      "Type",
+      "Balance"
+    ],
+    "dataLength": 1,
+    "sampleRow": [
+      "[object Object]",
+      "",
+      "Active",
+      "Margin",
+      "PKR ?"
+    ]
+  },
+  "orderHistory": {
+    "headers": [
+      "Order ID",
+      "Symbol",
+      "Side",
+      "Type",
+      "Quantity",
+      "Price",
+      "Status",
+      "Date"
+    ],
+    "dataLength": 1
+  },
+  "positions": {
+    "headers": [
+      "Symbol",
+      "Quantity",
+      "Cost",
+      "Current Value",
+      "Profit/Loss",
+      "Change %"
+    ],
+    "dataLength": 3
+  },
+  "accountInfo": {
+    "headers": [
+      "Detail",
+      "Value"
+    ],
+    "dataLength": 7
+  }
+}
+2:38:21 AM [express] GET /api/account-details/1 200 in 1073ms :: {"tradingAccounts":{"headers":["Acc…
