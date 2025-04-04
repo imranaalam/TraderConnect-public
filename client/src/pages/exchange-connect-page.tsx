@@ -219,19 +219,25 @@ export default function ExchangeConnectPage() {
     testConnectionMutation.mutate(connectionData as ConnectionTest);
   }
 
-  function onSubmit(data: FormValues) {
-    // Don't submit if test failed or not tested yet
-    if (connectionStatus === 'failed' || connectionStatus === 'not_tested') {
+  async function onSubmit(data: FormValues) {
+    try {
+      setConnectionStatus('testing');
+      const { connectionData } = prepareConnectionData(data);
+      
+      // First test the connection
+      await testConnectionMutation.mutateAsync(connectionData);
+      
+      // If test succeeds, save the connection
+      connectionMutation.mutate(connectionData);
+      
+    } catch (error: any) {
+      setConnectionStatus('failed');
       toast({
-        title: "Test connection first",
-        description: "Please test your connection credentials before saving",
+        title: "Connection test failed",
+        description: error.message || "Failed to verify your credentials",
         variant: "destructive",
       });
-      return;
     }
-
-    const { connectionData } = prepareConnectionData(data);
-    connectionMutation.mutate(connectionData);
   }
 
   return (
@@ -579,23 +585,13 @@ export default function ExchangeConnectPage() {
                       )}
                     </div>
 
-                    <div className="flex space-x-4">
-                      <Button 
-                        type="button" 
-                        variant="outline"
-                        className="flex-1" 
-                        onClick={testConnection}
-                        disabled={testConnectionMutation.isPending}
-                      >
-                        {testConnectionMutation.isPending ? "Testing..." : "Test Connection"}
-                      </Button>
-
+                    <div className="flex">
                       <Button 
                         type="submit" 
                         className="flex-1" 
-                        disabled={connectionMutation.isPending || connectionStatus !== 'success'}
+                        disabled={connectionMutation.isPending}
                       >
-                        {connectionMutation.isPending ? "Connecting..." : "Connect"}
+                        {connectionMutation.isPending ? "Connecting..." : "Save Connection"}
                       </Button>
                     </div>
                   </form>
