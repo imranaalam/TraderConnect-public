@@ -1,8 +1,11 @@
-// akdApiClient.ts
+// server/brokers/akdApiClient.ts
 import * as soap from "soap";
 import * as zlib from "zlib";
 import { promisify } from "util";
 import { Buffer } from "buffer"; // Ensure Buffer is explicitly imported
+import { createClientAsync } from 'soap';
+import { AccountDetailsResponse, AKDClientConfig } from './akd/types';
+import { getTradingAccounts, getOrderHistory, getPositions, getAccountInfo, getAccountStatement } from './akd/fetchers';
 
 // Promisify zlib functions for async/await usage
 const gunzipAsync = promisify(zlib.gunzip);
@@ -553,690 +556,24 @@ interface FetchResult {
     data: string[][];
 }
 
-async function getTradingAccounts(
-    client: any,
-    traderId: string,
-): Promise<{ result: FetchResult; primaryAccount: string }> {
-    const apiMethod = "TradAccounts";
-    console.log(`---> Fetching ${apiMethod} for trader ${traderId}...`);
-    const targetHeaders = ["Account", "Name", "Status", "Type", "Balance"];
-    let primaryAccount = DEFAULT_ACCOUNT_FALLBACK;
-    const fallbackData: string[][] = [
-        [DEFAULT_ACCOUNT_FALLBACK, traderId, "Auth Failed", "N/A", "N/A"],
-    ];
 
-    try {
-        const params = { userName: traderId };
-        console.log(
-            `[${apiMethod}] Calling ${apiMethod}Async with params:`,
-            params,
-        );
-        const result = await client.TradAccountsAsync(params);
-        const processed = await processAndUnzipResponse(apiMethod, result);
+const DEFAULT_CONFIG: Required<AKDClientConfig> = {
+  wsdlUrl: process.env.AKD_WSDL_URL || "http://online.akdtrade.biz/TradeCastService/LoginServerService?wsdl",
+  serviceUsername: process.env.AKD_SERVICE_USER || "myservice",
+  servicePassword: process.env.AKD_SERVICE_PASSWORD || "12345678"
+};
 
-        if (processed?.toLowerCase() === "not authorized") {
-            console.error(
-                `[${apiMethod}] Authentication failed for user ${traderId}. Response: "Not Authorized"`,
-            );
-            return {
-                result: { headers: targetHeaders, data: fallbackData },
-                primaryAccount,
-            };
-        }
-        if (!processed) {
-            console.warn(
-                `[${apiMethod}] Processed response is null or empty for ${traderId}.`,
-            );
-            return {
-                result: { headers: targetHeaders, data: [] },
-                primaryAccount,
-            };
-        }
+export class AKDClient {
+  private config: Required<AKDClientConfig>;
 
-        const structuredData = parseResponseToStructure(
-            apiMethod,
-            processed,
-            KEY_MAPPINGS[apiMethod],
-        );
+  constructor(config?: AKDClientConfig) {
+    this.config = { ...DEFAULT_CONFIG, ...config };
+  }
 
-        const accountNumbers = extractAccountNumbers(
-            structuredData,
-            "AccountCode",
-        );
-
-        if (accountNumbers.length > 0) {
-            primaryAccount = accountNumbers[0];
-            console.log(
-                `[${apiMethod}] Primary account determined: ${primaryAccount}`,
-            );
-            const dataOut: string[][] = structuredData.map((item) => [
-                toStringSafe(item.AccountCode),
-                toStringSafe(item.AccountTitle),
-                toStringSafe(item.AccountStatus || "Active"),
-                "Unknown",
-                "PKR ?",
-            ]);
-            console.log(
-                `[${apiMethod}] Success. Found ${dataOut.length} accounts.`,
-            );
-            return {
-                result: { headers: targetHeaders, data: dataOut },
-                primaryAccount,
-            };
-        } else {
-            console.warn(
-                `[${apiMethod}] No valid account numbers extracted for ${traderId}.`,
-            );
-            if (
-                structuredData.length > 0 &&
-                structuredData[0]?.[KEY_MAPPINGS[apiMethod][0]] ===
-                    "Not Authorized"
-            ) {
-                console.error(
-                    `[${apiMethod}] Auth failed (detected during parsing).`,
-                );
-                return {
-                    result: { headers: targetHeaders, data: fallbackData },
-                    primaryAccount: DEFAULT_ACCOUNT_FALLBACK,
-                };
-            }
-            return {
-                result: { headers: targetHeaders, data: [] },
-                primaryAccount: DEFAULT_ACCOUNT_FALLBACK,
-            };
-        }
-    } catch (error: any) {
-        console.error(
-            `[${apiMethod}] CRITICAL ERROR for ${traderId}: ${error.message}`,
-        );
-        console.error(error.stack);
-        if (error.Fault) {
-            console.error("SOAP Fault:", JSON.stringify(error.Fault, null, 2));
-        }
-        return {
-            result: { headers: targetHeaders, data: fallbackData },
-            primaryAccount,
-        };
-    }
-}
-
-async function getOrderHistory(
-    client: any,
-    traderId: string,
-    accountNo: string,
-    startDate = COMMON_START_DATE,
-    endDate = COMMON_END_DATE,
-): Promise<FetchResult> {
-    const apiMethod = "GetOrderHistory";
-    console.log(
-        `---> Fetching ${apiMethod} for trader ${traderId}, account ${accountNo}...`,
-    );
-    const targetHeaders = [
-        "Order ID",
-        "Symbol",
-        "Side",
-        "Type",
-        "Quantity",
-        "Price",
-        "Status",
-        "Date",
-    ];
-    const fallbackData: string[][] = [
-        [
-            "N/A",
-            "N/A",
-            "N/A",
-            "N/A",
-            "N/A",
-            "N/A",
-            accountNo === DEFAULT_ACCOUNT_FALLBACK ? "Auth Failed" : "Error",
-            "N/A",
-        ],
-    ];
-
-    if (accountNo === DEFAULT_ACCOUNT_FALLBACK) {
-        console.warn(
-            `[${apiMethod}] Skipping API call due to previous authentication failure.`,
-        );
-        return { headers: targetHeaders, data: fallbackData };
-    }
-
-    try {
-        const params = {
-            trader: traderId,
-            accountNo: accountNo,
-            pincode: "",
-            scrip: "ALL",
-            type: "ALL",
-            startDate: startDate,
-            endDate: endDate,
-            from: "OrderHistory",
-        };
-        console.log(
-            `[${apiMethod}] Calling ${apiMethod}Async with params:`,
-            params,
-        );
-        const result = await client.GetOrderHistoryAsync(params);
-        const processed = await processAndUnzipResponse(apiMethod, result);
-
-        if (processed?.toLowerCase() === "not authorized") {
-            console.error(
-                `[${apiMethod}] Authentication failed for this call.`,
-            );
-            return {
-                headers: targetHeaders,
-                data: [
-                    [
-                        "N/A",
-                        "N/A",
-                        "N/A",
-                        "N/A",
-                        "N/A",
-                        "N/A",
-                        "Auth Failed",
-                        "N/A",
-                    ],
-                ],
-            };
-        }
-        if (!processed) {
-            console.warn(
-                `[${apiMethod}] Processed response is null or empty for ${traderId}.`,
-            );
-            return { headers: targetHeaders, data: [] };
-        }
-
-        const structuredData = parseResponseToStructure(
-            apiMethod,
-            processed,
-            KEY_MAPPINGS[apiMethod],
-        );
-
-        if (
-            structuredData.length === 1 &&
-            structuredData[0]?.[KEY_MAPPINGS[apiMethod][0]] === "Not Authorized"
-        ) {
-            console.error(
-                `[${apiMethod}] Authentication failed (detected during parsing).`,
-            );
-            return {
-                headers: targetHeaders,
-                data: [
-                    [
-                        "N/A",
-                        "N/A",
-                        "N/A",
-                        "N/A",
-                        "N/A",
-                        "N/A",
-                        "Auth Failed",
-                        "N/A",
-                    ],
-                ],
-            };
-        }
-
-        if (structuredData.length > 0 && !structuredData[0]?.error) {
-            const dataOut: string[][] = structuredData.map((item, index) => [
-                toStringSafe(item.Reference || `OH-${index + 1}`),
-                toStringSafe(item.Symbol),
-                toStringSafe(item.Side),
-                toStringSafe(item.OrderType),
-                toStringSafe(item.Quantity),
-                toStringSafe(item.Rate),
-                "Completed",
-                toStringSafe(item.OrderDate || item.TradeDate || ""),
-            ]);
-            console.log(
-                `[${apiMethod}] Success. Found ${dataOut.length} orders.`,
-            );
-            return { headers: targetHeaders, data: dataOut };
-        }
-
-        console.warn(
-            `[${apiMethod}] No valid data or parsing error for ${traderId}. Using fallback.`,
-        );
-        return { headers: targetHeaders, data: fallbackData };
-    } catch (error: any) {
-        console.error(
-            `Error in ${apiMethod} for ${traderId}: ${error.message}`,
-        );
-        console.error(error.stack);
-        if (error.Fault) {
-            console.error("SOAP Fault:", JSON.stringify(error.Fault, null, 2));
-        }
-        return { headers: targetHeaders, data: fallbackData };
-    }
-}
-
-async function getPositions(
-    client: any,
-    traderId: string,
-    accountNo: string,
-): Promise<FetchResult> {
-    const apiMethod = "GetCollateral";
-    console.log(
-        `---> Fetching Positions (via ${apiMethod}) for trader ${traderId}, account ${accountNo}...`,
-    );
-    const targetHeaders = [
-        "Symbol",
-        "Quantity",
-        "Avg Buy Rate",
-        "MTM Rate",
-        "Unsettled P/L",
-        "Value After Haircut",
-    ];
-    const fallbackData: string[][] = [
-        [
-            "N/A",
-            "N/A",
-            "N/A",
-            "N/A",
-            accountNo === DEFAULT_ACCOUNT_FALLBACK ? "Auth Failed" : "Error",
-            "N/A",
-        ],
-    ];
-
-    if (accountNo === DEFAULT_ACCOUNT_FALLBACK) {
-        console.warn(
-            `[${apiMethod}] Skipping API call due to previous authentication failure.`,
-        );
-        return { headers: targetHeaders, data: fallbackData };
-    }
-    if (typeof client.GetCollateralAsync !== "function") {
-        console.error(
-            `[${apiMethod}] Method GetCollateralAsync not found on SOAP client.`,
-        );
-        return { headers: targetHeaders, data: fallbackData };
-    }
-
-    try {
-        const params = { UserID: traderId, Account: accountNo };
-        console.log(
-            `[${apiMethod}] Calling ${apiMethod}Async with params:`,
-            params,
-        );
-        const result = await client.GetCollateralAsync(params);
-        const processed = await processAndUnzipResponse(apiMethod, result);
-
-        if (processed?.toLowerCase() === "not authorized") {
-            console.error(
-                `[${apiMethod}] Authentication failed for this call.`,
-            );
-            return {
-                headers: targetHeaders,
-                data: [["N/A", "N/A", "N/A", "N/A", "Auth Failed", "N/A"]],
-            };
-        }
-        if (!processed) {
-            console.warn(
-                `[${apiMethod}] Processed response is null or empty for ${traderId}.`,
-            );
-            return { headers: targetHeaders, data: [] };
-        }
-
-        const structuredData = parseResponseToStructure(
-            apiMethod,
-            processed,
-            KEY_MAPPINGS[apiMethod],
-        );
-
-        if (
-            structuredData.length === 1 &&
-            structuredData[0]?.[KEY_MAPPINGS[apiMethod][0]] === "Not Authorized"
-        ) {
-            console.error(
-                `[${apiMethod}] Authentication failed (detected during parsing).`,
-            );
-            return {
-                headers: targetHeaders,
-                data: [["N/A", "N/A", "N/A", "N/A", "Auth Failed", "N/A"]],
-            };
-        }
-        if (structuredData.length === 1 && structuredData[0]?.error) {
-            console.error(
-                `[${apiMethod}] Parsing failed. Raw response: ${structuredData[0].raw_response}`,
-            );
-            return { headers: targetHeaders, data: fallbackData }; // Use generic error fallback
-        }
-
-        if (structuredData.length > 0 && !structuredData[0]?.error) {
-            const dataOut: string[][] = structuredData.map((item) => [
-                toStringSafe(item.Symbol),
-                toStringSafe(item.Quantity),
-                toStringSafe(item.AvgBuyRate),
-                toStringSafe(item.MTM_Rate),
-                toStringSafe(item.UnsettledPL),
-                toStringSafe(item.ValueAfterHaircut),
-            ]);
-            console.log(
-                `[${apiMethod}] Success. Found ${dataOut.length} positions.`,
-            );
-            return { headers: targetHeaders, data: dataOut };
-        }
-
-        console.warn(
-            `[${apiMethod}] No valid positions found or parsing error for ${traderId}. Using fallback.`,
-        );
-        return { headers: targetHeaders, data: fallbackData };
-    } catch (error: any) {
-        console.error(
-            `Error in ${apiMethod} for ${traderId}: ${error.message}`,
-        );
-        console.error(error.stack);
-        if (error.Fault) {
-            console.error("SOAP Fault:", JSON.stringify(error.Fault, null, 2));
-        }
-        return { headers: targetHeaders, data: fallbackData };
-    }
-}
-
-// --- ADD GetAccountStatement Fetch Function ---
-async function getAccountStatement(
-    client: any,
-    traderId: string,
-    accountNo: string,
-    startDate = COMMON_START_DATE,
-    endDate = COMMON_END_DATE,
-): Promise<FetchResult> {
-    const apiMethod = "GetAccountStatement";
-    console.log(
-        `---> Fetching ${apiMethod} for trader ${traderId}, account ${accountNo}...`,
-    );
-    const targetHeaders = [
-        "Voucher No",
-        "Date",
-        "Description",
-        "Debit",
-        "Credit",
-        "Balance",
-    ]; // Adjusted Headers for UI
-    const fallbackData: string[][] = [
-        [
-            "N/A",
-            "N/A",
-            accountNo === DEFAULT_ACCOUNT_FALLBACK ? "Auth Failed" : "Error",
-            "N/A",
-            "N/A",
-            "N/A",
-        ],
-    ];
-
-    if (accountNo === DEFAULT_ACCOUNT_FALLBACK) {
-        console.warn(
-            `[${apiMethod}] Skipping API call due to previous authentication failure.`,
-        );
-        return { headers: targetHeaders, data: fallbackData };
-    }
-    if (typeof client.GetAccountStatementAsync !== "function") {
-        console.error(
-            `[${apiMethod}] Method GetAccountStatementAsync not found on SOAP client.`,
-        );
-        return { headers: targetHeaders, data: fallbackData };
-    }
-
-    try {
-        // Parameters for GetAccountStatement might differ slightly, adjust as needed
-        const params = {
-            userName: traderId, // Might be userName instead of traderId
-            accountNo: accountNo,
-            startDate: startDate,
-            endDate: endDate,
-            from: "TradeCast", // 'from' parameter might be needed
-        };
-        console.log(
-            `[${apiMethod}] Calling ${apiMethod}Async with params:`,
-            params,
-        );
-        const result = await client.GetAccountStatementAsync(params);
-        const processed = await processAndUnzipResponse(apiMethod, result);
-
-        if (processed?.toLowerCase() === "not authorized") {
-            console.error(
-                `[${apiMethod}] Authentication failed for this call.`,
-            );
-            return {
-                headers: targetHeaders,
-                data: [["N/A", "N/A", "Auth Failed", "N/A", "N/A", "N/A"]],
-            };
-        }
-        if (!processed) {
-            console.warn(
-                `[${apiMethod}] Processed response is null or empty for ${traderId}.`,
-            );
-            return { headers: targetHeaders, data: [] };
-        }
-
-        const structuredData = parseResponseToStructure(
-            apiMethod,
-            processed,
-            KEY_MAPPINGS[apiMethod],
-        );
-
-        if (
-            structuredData.length === 1 &&
-            structuredData[0]?.[KEY_MAPPINGS[apiMethod][0]] === "Not Authorized"
-        ) {
-            console.error(
-                `[${apiMethod}] Authentication failed (detected during parsing).`,
-            );
-            return {
-                headers: targetHeaders,
-                data: [["N/A", "N/A", "Auth Failed", "N/A", "N/A", "N/A"]],
-            };
-        }
-        if (structuredData.length === 1 && structuredData[0]?.error) {
-            console.error(
-                `[${apiMethod}] Parsing failed. Raw response: ${structuredData[0].raw_response}`,
-            );
-            return { headers: targetHeaders, data: fallbackData };
-        }
-
-        if (structuredData.length > 0 && !structuredData[0]?.error) {
-            const dataOut: string[][] = structuredData.map((item) => [
-                toStringSafe(item.VoucherNo),
-                toStringSafe(item.Date),
-                toStringSafe(item.Description),
-                toStringSafe(item.Debit),
-                toStringSafe(item.Credit),
-                toStringSafe(item.Balance),
-                // Note: Skipping UnknownCol2 for UI clarity
-            ]);
-            console.log(
-                `[${apiMethod}] Success. Found ${dataOut.length} statement entries.`,
-            );
-            return { headers: targetHeaders, data: dataOut };
-        }
-
-        console.warn(
-            `[${apiMethod}] No valid data or parsing error for ${traderId}. Using fallback.`,
-        );
-        return { headers: targetHeaders, data: fallbackData };
-    } catch (error: any) {
-        console.error(
-            `Error in ${apiMethod} for ${traderId}: ${error.message}`,
-        );
-        console.error(error.stack);
-        if (error.Fault) {
-            console.error("SOAP Fault:", JSON.stringify(error.Fault, null, 2));
-        }
-        return { headers: targetHeaders, data: fallbackData };
-    }
-}
-
-async function getAccountInfo(
-    client: any,
-    traderId: string,
-    accountNo: string,
-): Promise<FetchResult> {
-    const apiMethod = "GetExposureDynamic";
-    console.log(
-        `---> Fetching Account Info (via ${apiMethod}) for trader ${traderId}, account ${accountNo}...`,
-    );
-    const targetHeaders = ["Detail", "Value"];
-    const fallbackData: string[][] = [
-        [
-            "Status",
-            accountNo === DEFAULT_ACCOUNT_FALLBACK
-                ? "Auth Failed"
-                : "Error fetching details",
-        ],
-    ];
-
-    if (accountNo === DEFAULT_ACCOUNT_FALLBACK) {
-        console.warn(
-            `[${apiMethod}] Skipping API call due to previous authentication failure.`,
-        );
-        return { headers: targetHeaders, data: fallbackData };
-    }
-    if (typeof client.GetExposureDynamicAsync !== "function") {
-        console.error(
-            `[${apiMethod}] Method GetExposureDynamicAsync not found on SOAP client.`,
-        );
-        return {
-            headers: targetHeaders,
-            data: [["Error", "API Method Unavailable"]],
-        };
-    }
-
-    try {
-        const params = { UserID: traderId, account: accountNo, approved: "0" };
-        console.log(
-            `[${apiMethod}] Calling ${apiMethod}Async with params:`,
-            params,
-        );
-        const result = await client.GetExposureDynamicAsync(params);
-        const processed = await processAndUnzipResponse(apiMethod, result);
-
-        if (processed?.toLowerCase() === "not authorized") {
-            console.error(
-                `[${apiMethod}] Authentication failed for this call.`,
-            );
-            return {
-                headers: targetHeaders,
-                data: [["Status", "Auth Failed"]],
-            };
-        }
-        if (!processed) {
-            console.warn(
-                `[${apiMethod}] Processed response is null or empty for ${traderId}.`,
-            );
-            return { headers: targetHeaders, data: [] };
-        }
-
-        const structuredData = parseExposureDynamic(apiMethod, processed); // Use the special parser
-
-        if (
-            structuredData.length === 1 &&
-            structuredData[0]?.Metric === "Error"
-        ) {
-            console.error(
-                `[${apiMethod}] Authentication failed or error during parsing:`,
-                structuredData[0].Error,
-            );
-            return {
-                headers: targetHeaders,
-                data: [
-                    ["Status", structuredData[0].Error || "Auth/Parse Failed"],
-                ],
-            };
-        }
-        if (structuredData.length === 1 && structuredData[0]?.error) {
-            console.error(
-                `[${apiMethod}] Parsing failed. Raw response: ${structuredData[0].raw_response}`,
-            );
-            return { headers: targetHeaders, data: fallbackData }; // Use generic error fallback
-        }
-
-        if (structuredData.length > 0 && !structuredData[0]?.error) {
-            const dataOut: string[][] = [["Account ID", accountNo]];
-            const findMetricValue = (
-                metricNamePattern: RegExp,
-                marketKeyPattern: RegExp = /^REG/i,
-            ): string | null => {
-                const metricRow = structuredData.find((item) =>
-                    metricNamePattern.test(item.Metric),
-                );
-                if (!metricRow) return null;
-                const matchingMarketKey = Object.keys(metricRow).find(
-                    (key) => key !== "Metric" && marketKeyPattern.test(key),
-                );
-                return matchingMarketKey
-                    ? toStringSafe(metricRow[matchingMarketKey])
-                    : null;
-            };
-
-            // Extract relevant details using RegEx patterns
-            const balance = findMetricValue(/^Floating_Balance/i);
-            const cashValue = findMetricValue(/^~Cash/i);
-            const allowedLimitReg = findMetricValue(/^Allowed_Limit/i, /^REG/i);
-            const availableAmtReg = findMetricValue(
-                /^Available_Amount|^Available_Amt/i,
-                /^REG/i,
-            ); // Match both patterns
-            const allowedLimitFut = findMetricValue(/^Allowed_Limit/i, /^FUT/i);
-            const availableAmtFut = findMetricValue(
-                /^Available_Amount|^Available_Amt/i,
-                /^FUT/i,
-            ); // Match both patterns
-            const exposure = findMetricValue(/^Exposure/i, /^FUT/i);
-            const profitLoss = findMetricValue(/^Profit\/Loss/i, /^ODL/i); // Assuming ODL market
-
-            if (balance) dataOut.push(["Floating Balance", balance]);
-            if (cashValue) dataOut.push(["Cash", cashValue]);
-            if (allowedLimitReg)
-                dataOut.push(["Allowed Limit (REG)", allowedLimitReg]);
-            if (availableAmtReg)
-                dataOut.push(["Available Amount (REG)", availableAmtReg]);
-            if (allowedLimitFut)
-                dataOut.push(["Allowed Limit (FUT)", allowedLimitFut]);
-            if (availableAmtFut)
-                dataOut.push(["Available Amount (FUT)", availableAmtFut]);
-            if (exposure) dataOut.push(["Exposure (FUT)", exposure]);
-            if (profitLoss) dataOut.push(["Profit/Loss (ODL)", profitLoss]);
-
-            console.log(`[${apiMethod}] Success. Extracted info.`);
-            return { headers: targetHeaders, data: dataOut };
-        }
-
-        console.warn(
-            `[${apiMethod}] No valid account info found or parsing error for ${traderId}. Using fallback.`,
-        );
-        return { headers: targetHeaders, data: fallbackData };
-    } catch (error: any) {
-        console.error(
-            `Error in ${apiMethod} for ${traderId}: ${error.message}`,
-        );
-        console.error(error.stack);
-        if (error.Fault) {
-            console.error("SOAP Fault:", JSON.stringify(error.Fault, null, 2));
-        }
-        return { headers: targetHeaders, data: fallbackData };
-    }
-}
-
-// ============================
-// Main Exported Functions
-// ============================
-
-async function fetchAllAccountDetails(
+  async getAllAccountDetails(
     traderUsername: string,
-    traderPassword: string,
-) {
-    // Log received TRADER credentials (NO MASKING FOR DEBUG)
-    console.log(
-        `Credentials received for AKD connection: {"username":"${traderUsername}","password":"${traderPassword}"}`,
-    );
-
-    if (!traderUsername || !SERVICE_USERNAME || !SERVICE_PASSWORD) {
-        console.error(
-            "Error: Missing Trader Credentials or Service Credentials.",
-        );
-        return {
-            /* ... error structure ... */
-        };
-    }
-
+    traderPassword: string
+  ): Promise<AccountDetailsResponse> {
     const requestId = Date.now();
     console.log(
         `Fetching AKD details for ${traderUsername}, request ID: ${requestId}`,
@@ -1244,17 +581,17 @@ async function fetchAllAccountDetails(
 
     try {
         console.log(
-            `Attempting SOAP connection to ${WSDL_URL} using SERVICE credentials...`,
+            `Attempting SOAP connection to ${this.config.wsdlUrl} using SERVICE credentials...`,
         );
-        console.log(`   Service Username: ${SERVICE_USERNAME}`);
-        console.log(`   Service Password: ${SERVICE_PASSWORD}`);
+        console.log(`   Service Username: ${this.config.serviceUsername}`);
+        console.log(`   Service Password: ${this.config.servicePassword}`);
 
         const timestamp = new Date().toISOString();
-        const client = await soap.createClientAsync(WSDL_URL);
+        const client = await createClientAsync(this.config.wsdlUrl);
 
         // --- SET SERVICE AUTHENTICATION ---
         client.setSecurity(
-            new soap.BasicAuthSecurity(SERVICE_USERNAME, SERVICE_PASSWORD),
+            new soap.BasicAuthSecurity(this.config.serviceUsername, this.config.servicePassword),
         );
         console.log("SOAP client created and Service authentication set.");
 
@@ -1281,6 +618,10 @@ async function fetchAllAccountDetails(
                     headers: ["Status"],
                     data: [["Authentication Failed"]],
                 },
+                accountStatement: {
+                    headers: ["Status"],
+                    data: [["Authentication Failed"]],
+                },
                 timestamp,
                 dataSource: "error_auth",
             };
@@ -1295,7 +636,7 @@ async function fetchAllAccountDetails(
                 getOrderHistory(client, traderUsername, primaryAccount),
                 getPositions(client, traderUsername, primaryAccount),
                 getAccountInfo(client, traderUsername, primaryAccount),
-                getAccountStatement(client, traderUsername, primaryAccount), // <-- ADDED CALL
+                getAccountStatement(client, traderUsername, primaryAccount),
             ]);
 
         const dataSource = "api";
@@ -1326,7 +667,6 @@ async function fetchAllAccountDetails(
                     },
                     accountStatement: {
                         headers: accountStatement.headers,
-
                         dataLength: accountStatement.data.length,
                     },
                 },
@@ -1360,39 +700,28 @@ async function fetchAllAccountDetails(
             orderHistory: { headers: ["Error"], data: [[`API Failure`]] },
             positions: { headers: ["Error"], data: [[`API Failure`]] },
             accountInfo: { headers: ["Error"], data: [[`API Failure`]] },
+            accountStatement: { headers: ["Error"], data: [[`API Failure`]] },
             timestamp: new Date().toISOString(),
             dataSource: "error",
         };
         return fallbackErrorData;
     }
-}
+  }
 
-async function testConnection(
+  async testConnection(
     traderUsername: string,
-    traderPassword: string,
-): Promise<boolean> {
-    // Log received TRADER credentials (NO MASKING FOR DEBUG)
-    console.log(
-        `Testing AKD connection for trader: ${traderUsername}, password: ${traderPassword}`,
-    );
-
-    if (!traderUsername || !SERVICE_USERNAME || !SERVICE_PASSWORD) {
-        console.error(
-            "Test Connection Error: Missing Trader or Service credentials.",
-        );
-        return false;
-    }
-
+    traderPassword: string
+  ): Promise<boolean> {
     try {
         console.log(
             `Attempting SOAP connection using SERVICE credentials for test...`,
         );
-        console.log(`   Service Username: ${SERVICE_USERNAME}`);
-        console.log(`   Service Password: ${SERVICE_PASSWORD}`);
+        console.log(`   Service Username: ${this.config.serviceUsername}`);
+        console.log(`   Service Password: ${this.config.servicePassword}`);
 
-        const client = await soap.createClientAsync(WSDL_URL);
+        const client = await createClientAsync(this.config.wsdlUrl);
         client.setSecurity(
-            new soap.BasicAuthSecurity(SERVICE_USERNAME, SERVICE_PASSWORD),
+            new soap.BasicAuthSecurity(this.config.serviceUsername, this.config.servicePassword),
         );
 
         const params = { userName: traderUsername };
@@ -1427,8 +756,10 @@ async function testConnection(
         }
         return false;
     }
+  }
 }
 
+export const getAllAccountDetails = new AKDClient().getAllAccountDetails.bind(new AKDClient());
+export const testConnection = new AKDClient().testConnection.bind(new AKDClient());
+
 // --- Exports ---
-const getAllAccountDetails = fetchAllAccountDetails;
-export { getAllAccountDetails, testConnection };
