@@ -50,6 +50,14 @@ export default function HomePage() {
 
   return (
     <div className="mt-10 space-y-6">
+      <div className="flex justify-between items-center mb-6">
+        <h1 className="text-2xl font-semibold">Your Accounts</h1>
+        <Link href="/connect">
+          <Button className="bg-black text-white hover:bg-black/90">
+            Add Exchange
+          </Button>
+        </Link>
+      </div>
       {connections && connections.length > 0 ? (
         connections.map((connection: any) => {
           const exchange = exchanges?.find(e => e.id === connection.exchangeId);

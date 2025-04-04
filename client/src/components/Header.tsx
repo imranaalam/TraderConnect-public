@@ -26,11 +26,6 @@ export default function Header() {
                     Accounts
                   </span>
                 </Link>
-                <Link href="/connect">
-                  <span className={`${location === "/connect" ? 'border-primary text-primary' : 'border-transparent text-neutral-500 hover:border-neutral-300 hover:text-neutral-700'} border-b-2 px-1 pt-1 pb-3 text-sm font-medium cursor-pointer`}>
-                    Connect Exchange
-                  </span>
-                </Link>
               </nav>
             )}
           </div>

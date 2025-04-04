@@ -549,16 +549,9 @@ export default function ConnectedDashboardPage() {
             {/* Connection Details Card (remains the same) */}
             <Card>
                 <CardHeader className="flex flex-row justify-between items-center">
-                    <div className="flex justify-between w-full">
-                        <div>
-                            <CardTitle className="text-xl">{exchange?.name || `Exchange ${connection.exchangeId}`}</CardTitle>
-                            <CardDescription>{broker ? `${broker.name} Connection` : "Direct Exchange Connection"}{connection.accountId ? ` (${connection.accountId})` : ""}</CardDescription>
-                        </div>
-                        <Link href="/connect">
-                            <Button variant="outline">
-                                Add Exchange
-                            </Button>
-                        </Link>
+                    <div>
+                        <CardTitle className="text-xl">{exchange?.name || `Exchange ${connection.exchangeId}`}</CardTitle>
+                        <CardDescription>{broker ? `${broker.name} Connection` : "Direct Exchange Connection"}{connection.accountId ? ` (${connection.accountId})` : ""}</CardDescription>
                     </div>
                     <div className="flex items-center">
                         <span className={`h-3 w-3 ${connection.isActive ? "bg-green-500" : "bg-neutral-400"} rounded-full mr-2`}></span>
