@@ -1,21 +1,15 @@
-import { useQuery, useMutation } from "@tanstack/react-query";
+
+import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/hooks/use-auth";
 import { Link } from "wouter";
 import WelcomeMessage from "@/components/WelcomeMessage";
 import { Button } from "@/components/ui/button";
-import { PlusIcon, ArrowRight, StarIcon } from "lucide-react";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { Connection, Exchange, Broker } from "@shared/schema";
-import { formatDistanceToNow } from "date-fns";
-import { Skeleton } from "@/components/ui/skeleton";
-import { useToast } from "@/hooks/use-toast";
-import { apiRequest, queryClient } from "@/lib/queryClient";
 import ExchangesList from "@/components/ExchangesList";
-
+import { useState } from "react";
 
 export default function HomePage() {
   const { isAuthenticated } = useAuth();
+  const [showAllExchanges, setShowAllExchanges] = useState(false);
 
   if (!isAuthenticated) {
     return (
@@ -37,12 +31,26 @@ export default function HomePage() {
     <div className="container py-8">
       <div className="flex justify-between items-center mb-8">
         <h1 className="text-2xl font-semibold">Your Trading Exchanges</h1>
-        <Button asChild>
-          <Link href="/connect">Add New Exchange</Link>
-        </Button>
+        <div className="space-x-4">
+          <Button 
+            variant={showAllExchanges ? "outline" : "default"}
+            onClick={() => setShowAllExchanges(false)}
+          >
+            Connected
+          </Button>
+          <Button 
+            variant={showAllExchanges ? "default" : "outline"}
+            onClick={() => setShowAllExchanges(true)}
+          >
+            All Exchanges
+          </Button>
+          <Button asChild>
+            <Link href="/connect">Add New Exchange</Link>
+          </Button>
+        </div>
       </div>
 
-      <ExchangesList />
+      <ExchangesList showAllExchanges={showAllExchanges} />
     </div>
   );
 }
