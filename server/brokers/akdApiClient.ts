@@ -931,21 +931,47 @@ async function getPositions(
     }
 }
 
-
-
 // --- ADD GetAccountStatement Fetch Function ---
-async function getAccountStatement(client: any, traderId: string, accountNo: string, startDate = COMMON_START_DATE, endDate = COMMON_END_DATE): Promise<FetchResult> {
+async function getAccountStatement(
+    client: any,
+    traderId: string,
+    accountNo: string,
+    startDate = COMMON_START_DATE,
+    endDate = COMMON_END_DATE,
+): Promise<FetchResult> {
     const apiMethod = "GetAccountStatement";
-    console.log(`---> Fetching ${apiMethod} for trader ${traderId}, account ${accountNo}...`);
-    const targetHeaders = ["Voucher No", "Date", "Description", "Debit", "Credit", "Balance"]; // Adjusted Headers for UI
-    const fallbackData: string[][] = [[ "N/A", "N/A", accountNo === DEFAULT_ACCOUNT_FALLBACK ? "Auth Failed" : "Error", "N/A", "N/A", "N/A" ]];
+    console.log(
+        `---> Fetching ${apiMethod} for trader ${traderId}, account ${accountNo}...`,
+    );
+    const targetHeaders = [
+        "Voucher No",
+        "Date",
+        "Description",
+        "Debit",
+        "Credit",
+        "Balance",
+    ]; // Adjusted Headers for UI
+    const fallbackData: string[][] = [
+        [
+            "N/A",
+            "N/A",
+            accountNo === DEFAULT_ACCOUNT_FALLBACK ? "Auth Failed" : "Error",
+            "N/A",
+            "N/A",
+            "N/A",
+        ],
+    ];
 
     if (accountNo === DEFAULT_ACCOUNT_FALLBACK) {
-         console.warn(`[${apiMethod}] Skipping API call due to previous authentication failure.`);
-         return { headers: targetHeaders, data: fallbackData };
+        console.warn(
+            `[${apiMethod}] Skipping API call due to previous authentication failure.`,
+        );
+        return { headers: targetHeaders, data: fallbackData };
     }
-    if (typeof client.GetAccountStatementAsync !== 'function') {
-        console.error(`[${apiMethod}] Method GetAccountStatementAsync not found on SOAP client.`);
+    if (typeof client.GetAccountStatementAsync !== "function") {
+        console.error(
+            `[${apiMethod}] Method GetAccountStatementAsync not found on SOAP client.`,
+        );
         return { headers: targetHeaders, data: fallbackData };
     }
 
@@ -956,53 +982,84 @@ async function getAccountStatement(client: any, traderId: string, accountNo: str
             accountNo: accountNo,
             startDate: startDate,
             endDate: endDate,
-            from: "TradeCast" // 'from' parameter might be needed
+            from: "TradeCast", // 'from' parameter might be needed
         };
-        console.log(`[${apiMethod}] Calling ${apiMethod}Async with params:`, params);
+        console.log(
+            `[${apiMethod}] Calling ${apiMethod}Async with params:`,
+            params,
+        );
         const result = await client.GetAccountStatementAsync(params);
         const processed = await processAndUnzipResponse(apiMethod, result);
 
-         if (processed?.toLowerCase() === 'not authorized') {
-             console.error(`[${apiMethod}] Authentication failed for this call.`);
-             return { headers: targetHeaders, data: [[ "N/A", "N/A", "Auth Failed", "N/A", "N/A", "N/A" ]] };
-          }
-          if (!processed) {
-              console.warn(`[${apiMethod}] Processed response is null or empty for ${traderId}.`);
-               return { headers: targetHeaders, data: [] };
-          }
+        if (processed?.toLowerCase() === "not authorized") {
+            console.error(
+                `[${apiMethod}] Authentication failed for this call.`,
+            );
+            return {
+                headers: targetHeaders,
+                data: [["N/A", "N/A", "Auth Failed", "N/A", "N/A", "N/A"]],
+            };
+        }
+        if (!processed) {
+            console.warn(
+                `[${apiMethod}] Processed response is null or empty for ${traderId}.`,
+            );
+            return { headers: targetHeaders, data: [] };
+        }
 
-        const structuredData = parseResponseToStructure(apiMethod, processed, KEY_MAPPINGS[apiMethod]);
+        const structuredData = parseResponseToStructure(
+            apiMethod,
+            processed,
+            KEY_MAPPINGS[apiMethod],
+        );
 
-         if (structuredData.length === 1 && structuredData[0]?.[KEY_MAPPINGS[apiMethod][0]] === 'Not Authorized') {
-              console.error(`[${apiMethod}] Authentication failed (detected during parsing).`);
-               return { headers: targetHeaders, data: [[ "N/A", "N/A", "Auth Failed", "N/A", "N/A", "N/A" ]] };
-          }
-          if (structuredData.length === 1 && structuredData[0]?.error) {
-               console.error(`[${apiMethod}] Parsing failed. Raw response: ${structuredData[0].raw_response}`);
-                return { headers: targetHeaders, data: fallbackData };
-           }
+        if (
+            structuredData.length === 1 &&
+            structuredData[0]?.[KEY_MAPPINGS[apiMethod][0]] === "Not Authorized"
+        ) {
+            console.error(
+                `[${apiMethod}] Authentication failed (detected during parsing).`,
+            );
+            return {
+                headers: targetHeaders,
+                data: [["N/A", "N/A", "Auth Failed", "N/A", "N/A", "N/A"]],
+            };
+        }
+        if (structuredData.length === 1 && structuredData[0]?.error) {
+            console.error(
+                `[${apiMethod}] Parsing failed. Raw response: ${structuredData[0].raw_response}`,
+            );
+            return { headers: targetHeaders, data: fallbackData };
+        }
 
         if (structuredData.length > 0 && !structuredData[0]?.error) {
-            const dataOut: string[][] = structuredData.map(item => [
+            const dataOut: string[][] = structuredData.map((item) => [
                 toStringSafe(item.VoucherNo),
                 toStringSafe(item.Date),
                 toStringSafe(item.Description),
                 toStringSafe(item.Debit),
                 toStringSafe(item.Credit),
-                toStringSafe(item.Balance)
+                toStringSafe(item.Balance),
                 // Note: Skipping UnknownCol2 for UI clarity
             ]);
-            console.log(`[${apiMethod}] Success. Found ${dataOut.length} statement entries.`);
+            console.log(
+                `[${apiMethod}] Success. Found ${dataOut.length} statement entries.`,
+            );
             return { headers: targetHeaders, data: dataOut };
         }
 
-        console.warn(`[${apiMethod}] No valid data or parsing error for ${traderId}. Using fallback.`);
+        console.warn(
+            `[${apiMethod}] No valid data or parsing error for ${traderId}. Using fallback.`,
+        );
         return { headers: targetHeaders, data: fallbackData };
-
     } catch (error: any) {
-        console.error(`Error in ${apiMethod} for ${traderId}: ${error.message}`);
+        console.error(
+            `Error in ${apiMethod} for ${traderId}: ${error.message}`,
+        );
         console.error(error.stack);
-        if (error.Fault) { console.error("SOAP Fault:", JSON.stringify(error.Fault, null, 2)); }
+        if (error.Fault) {
+            console.error("SOAP Fault:", JSON.stringify(error.Fault, null, 2));
+        }
         return { headers: targetHeaders, data: fallbackData };
     }
 }
@@ -1233,15 +1290,14 @@ async function fetchAllAccountDetails(
         );
 
         // Fetch other details IN PARALLEL for potentially faster loading
-        const [orderHistory, positions, accountInfo, accountStatement] = await Promise.all([
-             getOrderHistory(client, traderUsername, primaryAccount),
-             getPositions(client, traderUsername, primaryAccount),
-             getAccountInfo(client, traderUsername, primaryAccount),
-             getAccountStatement(client, traderUsername, primaryAccount) // <-- ADDED CALL
-         ]);
+        const [orderHistory, positions, accountInfo, accountStatement] =
+            await Promise.all([
+                getOrderHistory(client, traderUsername, primaryAccount),
+                getPositions(client, traderUsername, primaryAccount),
+                getAccountInfo(client, traderUsername, primaryAccount),
+                getAccountStatement(client, traderUsername, primaryAccount), // <-- ADDED CALL
+            ]);
 
-
-        
         const dataSource = "api";
 
         console.log(
@@ -1268,11 +1324,11 @@ async function fetchAllAccountDetails(
                         headers: accountInfo.headers,
                         dataLength: accountInfo.data.length,
                     },
-                    accountStatement:     {
-                        headers: accountStatement.headers,    
+                    accountStatement: {
+                        headers: accountStatement.headers,
 
                         dataLength: accountStatement.data.length,
-                    }
+                    },
                 },
                 null,
                 2,
@@ -1284,10 +1340,9 @@ async function fetchAllAccountDetails(
             orderHistory,
             positions,
             accountInfo,
-             accountStatement,
+            accountStatement,
             timestamp,
             dataSource,
-            
         };
     } catch (error: any) {
         console.error(
@@ -1311,14 +1366,6 @@ async function fetchAllAccountDetails(
         return fallbackErrorData;
     }
 }
-
-
-
-
-
-
-
-
 
 async function testConnection(
     traderUsername: string,
