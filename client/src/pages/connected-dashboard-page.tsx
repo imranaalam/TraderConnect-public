@@ -11,7 +11,7 @@ import {
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Badge } from "@/components/ui/badge";
+import { Badge } from "@/components/ui/badge"; // Keep Badge if used elsewhere, otherwise remove
 import { useToast } from "@/hooks/use-toast";
 
 // --- Define Types Used in Component ---
@@ -54,7 +54,6 @@ import {
     BookOpen, // Icon for Trade Log
     Activity, // Icon for Daily Activity Log
     AlertTriangle, // Icon for Outstanding Log or Errors
-    // FileText, // Icon for Account Statement (removed if not used)
 } from "lucide-react";
 import {
     Dialog,
@@ -110,7 +109,8 @@ interface DataTableProps {
     isLoading?: boolean;
     error?: string | null; // Explicit error message for this specific section
     maxHeight?: string;
-    defaultOpen?: boolean;
+    defaultOpen?: boolean; // Will default to true now
+    visibleColumns?: string[]; // NEW: Optional array of header names to display
 }
 
 const DataTableAccordion: React.FC<DataTableProps> = ({
@@ -119,16 +119,46 @@ const DataTableAccordion: React.FC<DataTableProps> = ({
     isLoading,
     error, // Prioritize passed error prop
     maxHeight = "500px",
-    defaultOpen = false,
+    defaultOpen = true, // <-- CHANGED: Default to true
+    visibleColumns, // <-- NEW PROP
 }) => {
-    // Determine if there's an error to display (explicit passed error OR error within fetchResult)
-    const displayError = error || fetchResult?.error; // Use error prop first, then check fetchResult
+    const displayError = error || fetchResult?.error;
     const isError = !!displayError;
-
-    // Determine if data is valid (exists, not just error rows within data, and no overriding error)
-    const hasValidData = fetchResult?.data && fetchResult.data.length > 0 && !isError;
-    const hasHeaders = fetchResult?.headers && fetchResult.headers.length > 0;
+    const hasRawData = fetchResult?.data && fetchResult.data.length > 0;
+    const hasRawHeaders = fetchResult?.headers && fetchResult.headers.length > 0;
     const accordionValue = title.toLowerCase().replace(/\s+/g, "-");
+
+    // --- NEW: Column Filtering Logic ---
+    const { displayHeaders, displayColumnIndices } = useMemo(() => {
+        if (!hasRawHeaders || !fetchResult?.headers) {
+            return { displayHeaders: [], displayColumnIndices: [] };
+        }
+
+        if (!visibleColumns || visibleColumns.length === 0) {
+            // No filter provided, show all columns
+            return {
+                displayHeaders: fetchResult.headers,
+                displayColumnIndices: fetchResult.headers.map((_, index) => index),
+            };
+        }
+
+        // Filter columns based on visibleColumns prop
+        const indices: number[] = [];
+        const headers: string[] = [];
+        fetchResult.headers.forEach((header, index) => {
+            if (visibleColumns.includes(header)) {
+                headers.push(header);
+                indices.push(index);
+            }
+        });
+        return { displayHeaders: headers, displayColumnIndices: indices };
+
+    }, [fetchResult?.headers, hasRawHeaders, visibleColumns]);
+
+    // Adjust data validity check based on *filtered* columns
+    const hasValidData = hasRawData && !isError && displayHeaders.length > 0;
+    // --- End Column Filtering Logic ---
+
 
     if (isLoading) {
         return (
@@ -155,13 +185,16 @@ const DataTableAccordion: React.FC<DataTableProps> = ({
         );
     }
 
-    // If no error, check if data is missing or empty
-    if (!hasValidData || !hasHeaders) {
+    // If no error, check if data is missing, empty, or no columns selected
+    if (!hasValidData) {
+        const message = !hasRawData ? "No data available." :
+                        displayHeaders.length === 0 && visibleColumns && visibleColumns.length > 0 ? "No matching columns found for the specified filter." :
+                        "No data to display for selected columns.";
         return (
             <Accordion type="single" collapsible className="w-full" defaultValue={defaultOpen ? accordionValue : undefined}>
                 <AccordionItem value={accordionValue} className="border-b">
                     <AccordionTrigger className="text-lg font-semibold hover:no-underline">{title}</AccordionTrigger>
-                    <AccordionContent><p className="p-4 text-neutral-500">No data available.</p></AccordionContent>
+                    <AccordionContent><p className="p-4 text-neutral-500">{message}</p></AccordionContent>
                 </AccordionItem>
             </Accordion>
         );
@@ -177,7 +210,8 @@ const DataTableAccordion: React.FC<DataTableProps> = ({
                         <Table>
                             <TableHeader className="sticky top-0 bg-background z-10 shadow-sm">
                                 <TableRow>
-                                    {fetchResult.headers.map((h, i) => (
+                                    {/* Use filtered headers */}
+                                    {displayHeaders.map((h, i) => (
                                         <TableHead key={`${title}-header-${i}`} className="whitespace-nowrap px-3 py-2 text-xs sm:text-sm">
                                             {h || `Col_${i + 1}`}
                                         </TableHead>
@@ -187,16 +221,15 @@ const DataTableAccordion: React.FC<DataTableProps> = ({
                             <TableBody>
                                 {fetchResult.data.map((row, i) => (
                                     <TableRow key={`${title}-row-${i}`} className={i % 2 === 0 ? "bg-muted/30 hover:bg-muted/60" : "hover:bg-muted/60"}>
-                                        {/* Check if row is an array before mapping cells */}
                                         {Array.isArray(row) ? (
-                                            Array.from({ length: fetchResult.headers.length }).map((_, j) => (
+                                            // Use filtered indices to get the correct cell data
+                                            displayColumnIndices.map((colIndex, j) => (
                                                 <TableCell key={`${title}-cell-${i}-${j}`} className="text-xs whitespace-nowrap px-3 py-1.5">
-                                                    {row[j] === null || row[j] === undefined || row[j] === "" ? "-" : String(row[j])}
+                                                    {row[colIndex] === null || row[colIndex] === undefined || row[colIndex] === "" ? "-" : String(row[colIndex])}
                                                 </TableCell>
                                             ))
                                         ) : (
-                                             // Render error cell if row data is not an array (unexpected format)
-                                             <TableCell colSpan={fetchResult.headers.length} className="text-xs text-red-500">Invalid row data format</TableCell>
+                                             <TableCell colSpan={displayHeaders.length} className="text-xs text-red-500">Invalid row data format</TableCell>
                                         )}
                                     </TableRow>
                                 ))}
@@ -301,19 +334,16 @@ export default function ConnectedDashboardPage() {
                  console.error("[Details Query] Invalid data format received:", data);
                  throw new Error("Invalid data format received for account details.");
             }
-            // Additional checks for required data sections can be added here if needed
-            // e.g., if (!data.tradingAccounts) throw new Error("Missing tradingAccounts data");
             return data;
         },
         retry: (failureCount, error) => {
-            // Don't retry on auth errors (401) reported by the API
             if (error.message.includes("401") || /auth failed/i.test(error.message)) {
                 return false;
             }
-            return failureCount < 2; // Retry twice for other errors
+            return failureCount < 2;
         },
-        refetchOnWindowFocus: false, // Avoid refetching just because window regained focus
-        staleTime: 5 * 60 * 1000, // Data is considered fresh for 5 minutes
+        refetchOnWindowFocus: false,
+        staleTime: 5 * 60 * 1000,
     });
 
     // Fetch Account Logs (uses AccountLogsResponse type)
@@ -322,22 +352,20 @@ export default function ConnectedDashboardPage() {
         error: accountLogsError,
         refetch: refetchAccountLogs,
         isFetching: isFetchingAccountLogs,
-        isLoading: isInitialLoadingAccountLogs, // Separate state for initial load vs refetch
+        isLoading: isInitialLoadingAccountLogs,
     } = useQuery<AccountLogsResponse, Error>({
         queryKey: [`/api/account-logs/${id}`],
-        enabled: showLogs && !!connection, // Fetch only when showLogs is true AND connection exists
+        enabled: showLogs && !!connection,
         queryFn: async () => {
             console.log(`[Logs Query] Fetching for connection ID: ${id}`);
-            const res = await apiRequest("GET", `/api/account-logs/${id}`); // Calls the new backend route
+            const res = await apiRequest("GET", `/api/account-logs/${id}`);
             if (!res.ok) {
                  const errorData = await res.json().catch(() => ({ message: "Failed to parse logs error response" }));
                  console.error(`[Logs Query] Fetch failed with status ${res.status}:`, errorData);
-                 // Throw the error message to be caught by react-query
                  throw new Error(errorData.message || `HTTP error! status: ${res.status}`);
             }
             const data: AccountLogsResponse = await res.json();
-             console.log(`[Logs Query] Received data source: ${data?.dataSource}`); // Log dataSource if provided
-             // Basic structure validation
+             console.log(`[Logs Query] Received data source: ${data?.dataSource}`);
              if (!data || typeof data !== 'object' || !data.tradeLogs || !data.activityLogs || !data.outstandingLogs) {
                   console.error("[Logs Query] Invalid data format received:", data);
                   throw new Error("Invalid data format received for logs.");
@@ -345,14 +373,13 @@ export default function ConnectedDashboardPage() {
             return data;
         },
          retry: (failureCount, error) => {
-             // Don't retry on auth errors (401) reported by the API
              if (error.message.includes("401") || /auth failed/i.test(error.message)) {
                  return false;
              }
              return failureCount < 2;
         },
         refetchOnWindowFocus: false,
-        staleTime: 5 * 60 * 1000, // Cache logs for 5 minutes
+        staleTime: 5 * 60 * 1000,
     });
 
     // --- Mutations ---
@@ -360,8 +387,8 @@ export default function ConnectedDashboardPage() {
         mutationFn: async () => apiRequest("DELETE", `/api/connections/${id}`),
         onSuccess: () => {
             toast({ title: "Disconnected", description: "Connection removed successfully." });
-            queryClient.invalidateQueries({ queryKey: ["/api/connections"] }); // Invalidate list view
-            setLocation("/"); // Redirect after successful disconnect
+            queryClient.invalidateQueries({ queryKey: ["/api/connections"] });
+            setLocation("/");
         },
         onError: (error: Error) => {
             console.error("Disconnection mutation error:", error);
@@ -380,14 +407,14 @@ export default function ConnectedDashboardPage() {
         },
         onSuccess: () => {
             toast({ title: "Credentials Updated", description: "Credentials saved successfully." });
-            queryClient.invalidateQueries({ queryKey: ["/api/connections", id] }); // Refetch specific connection
+            queryClient.invalidateQueries({ queryKey: ["/api/connections", id] });
             console.log("Credentials updated, refetching details...");
-            refetchAccountDetails(); // Always refetch details after credential change
-            if (showLogs) { // Refetch logs only if they are currently visible
+            refetchAccountDetails();
+            if (showLogs) {
                 console.log("...and refetching logs.");
                 refetchAccountLogs();
             }
-            setIsEditDialogOpen(false); // Close dialog on success
+            setIsEditDialogOpen(false);
         },
         onError: (error: Error) => {
             console.error("Credentials update mutation error:", error);
@@ -404,22 +431,21 @@ export default function ConnectedDashboardPage() {
         updateCredentialsMutation.mutate(credentials);
     };
 
-    // Define the handler for the logs button
     const handleToggleLogs = () => {
         if (!showLogs) {
             console.log("User clicked 'View Logs'. Setting showLogs=true.");
-            setShowLogs(true); // Enabling the query will trigger fetch if needed
+            setShowLogs(true);
         } else {
             console.log("User clicked 'Refresh Logs'. Triggering refetch.");
-            refetchAccountLogs(); // Manually refetch if already shown
+            refetchAccountLogs();
         }
     };
 
     // --- Memoized Values & Status Flags ---
-    const isLoadingPage = connectionLoading || exchangesLoading || brokersLoading; // Combined initial loading
+    const isLoadingPage = connectionLoading || exchangesLoading || brokersLoading;
 
-    // Memoize credential fields calculation
     const credentialFields = useMemo(() => {
+         // ... (credentialFields logic remains the same)
          const fields = [];
          if (!connection || brokersLoading || exchangesLoading) {
              return [{ name: "loading", label: "Loading..." }];
@@ -430,7 +456,8 @@ export default function ConnectedDashboardPage() {
          if (connection.authMethod === 'api') {
              fields.push({ name: 'apiKey', label: 'API Key' });
              fields.push({ name: 'apiSecret', label: 'API Secret' });
-             if (credentials && credentials.passphrase !== undefined) fields.push({ name: 'passphrase', label: 'Passphrase' });
+             // Check based on current state, not just connection.credentials
+             if (credentials && typeof credentials.passphrase === 'string') fields.push({ name: 'passphrase', label: 'Passphrase' });
          } else if (currentBroker?.name === 'AKD') {
              fields.push({ name: 'username', label: 'Username' });
              fields.push({ name: 'password', label: 'Password' });
@@ -446,9 +473,11 @@ export default function ConnectedDashboardPage() {
               fields.push({ name: 'apiSecret', label: 'API Secret' });
          }
          else {
+             // Default case or add more specific broker logic
              fields.push({ name: 'username', label: 'Username/ID' });
              fields.push({ name: 'password', label: 'Password' });
          }
+         // Add any other credentials fields present in the state but not covered above
          Object.keys(credentials).forEach(key => {
              if (!fields.some(f => f.name === key)) {
                  const label = key.replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase());
@@ -458,54 +487,37 @@ export default function ConnectedDashboardPage() {
          return fields;
     }, [connection, brokers, exchanges, credentials, brokersLoading, exchangesLoading]);
 
-
-    // --- Status Flags ---
-    // Account Details Status (using optional chaining ?. for safety)
+    // Status Flags (remain the same)
     const accountDetailsAuthFailed = accountDetails?.dataSource === "error_auth";
     const accountDetailsFetchFailed = !!accountDetailsError || accountDetails?.dataSource === "error";
     const accountDetailsPartialError = accountDetails?.dataSource === "api_with_errors";
-
-    // Helper to check if a specific FetchResult section has valid data (not errored)
     const hasValidData = (result?: FetchResultType) => result?.data && result.data.length > 0 && !result.error;
-
     const hasPositionsData = hasValidData(accountDetails?.positions);
     const hasOrderHistoryData = hasValidData(accountDetails?.orderHistory);
     const hasTradingAccountsData = hasValidData(accountDetails?.tradingAccounts);
     const hasAccountStatementData = hasValidData(accountDetails?.accountStatement);
     const hasAccountInfoData = hasValidData(accountDetails?.accountInfo);
-
-     // Check if *any* detail section has *any* data rows present (including potential error rows inside data)
-     const anyDetailsDataPresent = accountDetails && !accountDetailsFetchFailed && !accountDetailsAuthFailed &&
+    const anyDetailsDataPresent = accountDetails && !accountDetailsFetchFailed && !accountDetailsAuthFailed &&
          [
              accountDetails.tradingAccounts, accountDetails.orderHistory, accountDetails.positions,
              accountDetails.accountStatement, accountDetails.accountInfo
          ].some(section => section?.data?.length ?? 0 > 0);
-
     const defaultAccountDetailsTabValue = hasPositionsData ? "portfolio" : hasOrderHistoryData ? "orders" : (hasTradingAccountsData || hasAccountStatementData || hasAccountInfoData) ? "accounts" : "portfolio";
 
-    // Logs Status Flags
-    // Check query error first, then check backend response if query was ok
     const logsAuthFailed = (!!accountLogsError && /auth failed/i.test(accountLogsError.message || '')) || accountLogs?.dataSource === 'error_auth';
     const logsFetchFailed = (!!accountLogsError && !logsAuthFailed) || accountLogs?.dataSource === 'error';
     const logsPartialError = accountLogs?.dataSource === "api_with_errors";
-
-     // Helper to check if any log section has *any* data rows
-     const hasAnyLogData = (logSection?: FetchResultType) => logSection?.data?.length ?? 0 > 0;
-
-    // Check if *any* log section has *any* data rows present (even errors)
+    const hasAnyLogData = (logSection?: FetchResultType) => logSection?.data?.length ?? 0 > 0;
     const anyLogDataPresent = accountLogs && !logsFetchFailed && !logsAuthFailed &&
         (hasAnyLogData(accountLogs.tradeLogs) || hasAnyLogData(accountLogs.activityLogs) || hasAnyLogData(accountLogs.outstandingLogs));
-
-    // Default tab logic using hasValidData helper
     const defaultLogsTabValue = hasValidData(accountLogs?.tradeLogs) ? "trade-log"
                              : hasValidData(accountLogs?.activityLogs) ? "daily-activity-log"
                              : hasValidData(accountLogs?.outstandingLogs) ? "outstanding-log"
                              : "trade-log"; // Fallback
 
-
     // --- RENDER LOGIC ---
     if (isLoadingPage) {
-        // Main initial loading skeleton
+        // ... (skeleton remains the same)
         return (
              <div className="mt-10 space-y-6">
                  <Card><CardHeader className="flex flex-row justify-between items-center"><div><Skeleton className="h-7 w-48 mb-2" /><Skeleton className="h-5 w-32" /></div><Skeleton className="h-6 w-24" /></CardHeader><CardContent className="px-4 py-5 sm:p-0"><dl className="sm:divide-y sm:divide-neutral-200">{[...Array(6)].map((_, i) => (<div key={i} className="py-4 sm:py-5 sm:grid sm:grid-cols-3 sm:gap-4 sm:px-6"><Skeleton className="h-5 w-32" /><Skeleton className="h-5 w-48 sm:col-span-2" /></div>))}</dl></CardContent><CardFooter className="px-4 py-3 bg-neutral-50 border-t sm:px-6 flex justify-between"><Skeleton className="h-10 w-28" /><Skeleton className="h-10 w-28" /></CardFooter></Card>
@@ -515,13 +527,13 @@ export default function ConnectedDashboardPage() {
         );
     }
     if (connectionError) {
-        // Handle failure to load the core connection data
+         // ... (error remains the same)
         return (
              <div className="mt-10"><Card><CardContent className="pt-6 flex flex-col items-center justify-center text-center p-10"><AlertTriangle className="h-12 w-12 text-red-500 mb-4" /><h3 className="text-xl font-medium mb-2">Error Loading Connection</h3><p className="text-neutral-500 mb-6">Could not load connection details.<br /><span className="text-xs text-red-600">{connectionError.message}</span></p><Link href="/"><Button variant="outline">Go Back Home</Button></Link></CardContent></Card></div>
         );
     }
     if (!connection) {
-        // Handle connection not found after loading finishes
+        // ... (not found remains the same)
         return (
              <div className="mt-10"><Card><CardContent className="pt-6 flex flex-col items-center justify-center text-center p-10"><Info className="h-12 w-12 text-yellow-500 mb-4" /><h3 className="text-xl font-medium mb-2">Connection Not Found</h3><p className="text-neutral-500 mb-6">Connection '{id}' not found.</p><Link href="/"><Button variant="outline">Go Back Home</Button></Link></CardContent></Card></div>
         );
@@ -534,7 +546,7 @@ export default function ConnectedDashboardPage() {
     // --- Final Render ---
     return (
         <div className="mt-10 space-y-6">
-            {/* Connection Details Card */}
+            {/* Connection Details Card (remains the same) */}
             <Card>
                 <CardHeader className="flex flex-row justify-between items-center">
                     <div>
@@ -542,22 +554,21 @@ export default function ConnectedDashboardPage() {
                         <CardDescription>{broker ? `${broker.name} Connection` : "Direct Exchange Connection"}{connection.accountId ? ` (${connection.accountId})` : ""}</CardDescription>
                     </div>
                     <div className="flex items-center">
-                        {/* Display Active/Inactive based on connection.isActive */}
                         <span className={`h-3 w-3 ${connection.isActive ? "bg-green-500" : "bg-neutral-400"} rounded-full mr-2`}></span>
                         <span className={`text-sm ${connection.isActive ? "text-green-600" : "text-neutral-500"} font-medium`}>{connection.isActive ? "Active" : "Inactive"}</span>
                     </div>
                 </CardHeader>
                 <CardContent className="px-0 pt-0">
-                    <dl className="sm:divide-y sm:divide-neutral-200">
-                        <div className="py-3 sm:py-4 sm:grid sm:grid-cols-3 sm:gap-4 sm:px-6"><dt className="text-sm font-medium text-neutral-500">Auth Method</dt><dd className="mt-1 text-sm text-neutral-900 sm:mt-0 sm:col-span-2">{connection.authMethod}</dd></div>
-                        <div className="py-3 sm:py-4 sm:grid sm:grid-cols-3 sm:gap-4 sm:px-6"><dt className="text-sm font-medium text-neutral-500">Identifier</dt><dd className="mt-1 text-sm text-neutral-900 sm:mt-0 sm:col-span-2 break-all">{connection.accountId || credentials.username || credentials.userId || credentials.apiKey || "Not specified"}</dd></div>
-                        <div className="py-3 sm:py-4 sm:grid sm:grid-cols-3 sm:gap-4 sm:px-6"><dt className="text-sm font-medium text-neutral-500">Exchange Type</dt><dd className="mt-1 text-sm text-neutral-900 sm:mt-0 sm:col-span-2 capitalize">{exchange?.type || "N/A"}</dd></div>
-                        <div className="py-3 sm:py-4 sm:grid sm:grid-cols-3 sm:gap-4 sm:px-6"><dt className="text-sm font-medium text-neutral-500">Market Type</dt><dd className="mt-1 text-sm text-neutral-900 sm:mt-0 sm:col-span-2 capitalize">{exchange?.marketType || "N/A"}</dd></div>
-                        <div className="py-3 sm:py-4 sm:grid sm:grid-cols-3 sm:gap-4 sm:px-6"><dt className="text-sm font-medium text-neutral-500">Broker</dt><dd className="mt-1 text-sm text-neutral-900 sm:mt-0 sm:col-span-2">{broker ? broker.name : "Direct Connection"}</dd></div>
-                        <div className="py-3 sm:py-4 sm:grid sm:grid-cols-3 sm:gap-4 sm:px-6"><dt className="text-sm font-medium text-neutral-500">Last Connected</dt><dd className="mt-1 text-sm text-neutral-900 sm:mt-0 sm:col-span-2">{connection.lastConnected ? format(new Date(connection.lastConnected), "PPpp") : "Never"}</dd></div>
-                        <div className="py-3 sm:py-4 sm:grid sm:grid-cols-3 sm:gap-4 sm:px-6"><dt className="text-sm font-medium text-neutral-500">Credentials</dt><dd className="mt-1 text-sm text-neutral-900 sm:mt-0 sm:col-span-2 flex items-center"><span className="mr-3">Stored securely</span><Button size="sm" variant="outline" onClick={() => setIsEditDialogOpen(true)}><Edit className="h-4 w-4 mr-2" />Edit</Button></dd></div>
-                    </dl>
-                </CardContent>
+                     <dl className="sm:divide-y sm:divide-neutral-200">
+                         <div className="py-3 sm:py-4 sm:grid sm:grid-cols-3 sm:gap-4 sm:px-6"><dt className="text-sm font-medium text-neutral-500">Auth Method</dt><dd className="mt-1 text-sm text-neutral-900 sm:mt-0 sm:col-span-2">{connection.authMethod}</dd></div>
+                         <div className="py-3 sm:py-4 sm:grid sm:grid-cols-3 sm:gap-4 sm:px-6"><dt className="text-sm font-medium text-neutral-500">Identifier</dt><dd className="mt-1 text-sm text-neutral-900 sm:mt-0 sm:col-span-2 break-all">{connection.accountId || credentials.username || credentials.userId || credentials.apiKey || "Not specified"}</dd></div>
+                         <div className="py-3 sm:py-4 sm:grid sm:grid-cols-3 sm:gap-4 sm:px-6"><dt className="text-sm font-medium text-neutral-500">Exchange Type</dt><dd className="mt-1 text-sm text-neutral-900 sm:mt-0 sm:col-span-2 capitalize">{exchange?.type || "N/A"}</dd></div>
+                         <div className="py-3 sm:py-4 sm:grid sm:grid-cols-3 sm:gap-4 sm:px-6"><dt className="text-sm font-medium text-neutral-500">Market Type</dt><dd className="mt-1 text-sm text-neutral-900 sm:mt-0 sm:col-span-2 capitalize">{exchange?.marketType || "N/A"}</dd></div>
+                         <div className="py-3 sm:py-4 sm:grid sm:grid-cols-3 sm:gap-4 sm:px-6"><dt className="text-sm font-medium text-neutral-500">Broker</dt><dd className="mt-1 text-sm text-neutral-900 sm:mt-0 sm:col-span-2">{broker ? broker.name : "Direct Connection"}</dd></div>
+                         <div className="py-3 sm:py-4 sm:grid sm:grid-cols-3 sm:gap-4 sm:px-6"><dt className="text-sm font-medium text-neutral-500">Last Connected</dt><dd className="mt-1 text-sm text-neutral-900 sm:mt-0 sm:col-span-2">{connection.lastConnected ? format(new Date(connection.lastConnected), "PPpp") : "Never"}</dd></div>
+                         <div className="py-3 sm:py-4 sm:grid sm:grid-cols-3 sm:gap-4 sm:px-6"><dt className="text-sm font-medium text-neutral-500">Credentials</dt><dd className="mt-1 text-sm text-neutral-900 sm:mt-0 sm:col-span-2 flex items-center"><span className="mr-3">Stored securely</span><Button size="sm" variant="outline" onClick={() => setIsEditDialogOpen(true)}><Edit className="h-4 w-4 mr-2" />Edit</Button></dd></div>
+                     </dl>
+                 </CardContent>
                  <CardFooter className="px-4 py-3 bg-neutral-50 border-t sm:px-6 flex justify-between">
                      <Button variant="outline" onClick={() => setLocation("/")}>Back</Button>
                      <Button variant="destructive" onClick={() => disconnectMutation.mutate()} disabled={disconnectMutation.isPending}>{disconnectMutation.isPending ? "Disconnecting..." : "Disconnect"}</Button>
@@ -567,6 +578,7 @@ export default function ConnectedDashboardPage() {
             {/* Account Details Section */}
             <Card>
                 <CardHeader>
+                    {/* Header remains the same */}
                     <div className="flex justify-between items-center">
                         <div><CardTitle>Account Details</CardTitle><CardDescription>Account summary, portfolio, and orders</CardDescription></div>
                         <Button variant="outline" onClick={() => refetchAccountDetails()} disabled={isFetchingAccountDetails}>
@@ -575,163 +587,186 @@ export default function ConnectedDashboardPage() {
                     </div>
                 </CardHeader>
                 <CardContent>
-                    {/* Loading Skeleton for Details */}
+                    {/* Loading/Error states remain the same */}
                     {isInitialLoadingAccountDetails ? ( <div className="flex flex-col space-y-6 pt-4">{[1, 2].map(i => <div key={i} className="space-y-2"><Skeleton className="h-6 w-1/3" /><Skeleton className="h-32 w-full" /></div>)}</div> )
-                    /* Error Banners for Details */
                     : accountDetailsAuthFailed ? ( <Card className="border-red-200 bg-red-50 mt-4"><CardContent className="pt-6"><div className="flex items-center text-red-800"><AlertTriangle className="h-5 w-5 mr-2 shrink-0" /><p>Authentication failed. Cannot retrieve account details. Please check credentials.</p></div></CardContent></Card> )
                     : accountDetailsFetchFailed ? ( <Card className="border-yellow-200 bg-yellow-50 mt-4"><CardContent className="pt-6"><div className="flex items-center text-yellow-800"><Info className="h-5 w-5 mr-2 shrink-0" /><p>Failed to load account details. {accountDetailsError?.message || "Please try refreshing."}</p></div></CardContent></Card> )
                     : accountDetailsPartialError ? ( <Card className="border-orange-200 bg-orange-50 mt-4"><CardContent className="pt-6"><div className="flex items-center text-orange-800"><Info className="h-5 w-5 mr-2 shrink-0" /><p>Could not load all account details. Some sections might show errors.</p></div></CardContent></Card> )
                     : null }
 
-                    {/* Account Details Tabs (Render if not initial loading and no critical errors) */}
+                    {/* Account Details Tabs */}
                     {!isInitialLoadingAccountDetails && !accountDetailsAuthFailed && !accountDetailsFetchFailed && (
                         anyDetailsDataPresent ? (
                             <Tabs defaultValue={defaultAccountDetailsTabValue} className="w-full mt-4">
                                 <TabsList className="w-full justify-start border-b pb-0 mb-4 overflow-x-auto">
-                                    {/* Only render triggers if data exists in the response object */}
                                     {accountDetails?.positions && <TabsTrigger value="portfolio"><BarChart3 className="h-4 w-4 mr-2" />Portfolio</TabsTrigger>}
                                     {accountDetails?.orderHistory && <TabsTrigger value="orders"><ListFilter className="h-4 w-4 mr-2" />Orders</TabsTrigger>}
                                     {(accountDetails?.tradingAccounts || accountDetails?.accountStatement || accountDetails?.accountInfo) && <TabsTrigger value="accounts"><Key className="h-4 w-4 mr-2" />Accounts & Info</TabsTrigger>}
                                 </TabsList>
-                                {/* Conditionally render content based on existence */}
-                                {accountDetails?.positions && <TabsContent value="portfolio" className="mt-2"><DataTableAccordion title="Portfolio Positions" fetchResult={accountDetails.positions} isLoading={isFetchingAccountDetails && !accountDetails.positions} error={accountDetails.positions?.error} defaultOpen={true} /></TabsContent>}
-                                {accountDetails?.orderHistory && <TabsContent value="orders" className="mt-2"><DataTableAccordion title="Order History" fetchResult={accountDetails.orderHistory} isLoading={isFetchingAccountDetails && !accountDetails.orderHistory} error={accountDetails.orderHistory?.error} defaultOpen={defaultAccountDetailsTabValue === "orders"} /></TabsContent>}
+
+                                {/* Portfolio Tab */}
+                                {accountDetails?.positions && <TabsContent value="portfolio" className="mt-2">
+                                    <DataTableAccordion
+                                        title="Portfolio Positions"
+                                        fetchResult={accountDetails.positions}
+                                        isLoading={isFetchingAccountDetails && !accountDetails.positions}
+                                        error={accountDetails.positions?.error}
+                                        // EXAMPLE: Uncomment and list the EXACT header names you want to see
+                                        // visibleColumns={["Symbol", "Quantity", "Average Price", "Last Price", "Unrealized P/L", "Market Value"]}
+                                        // defaultOpen={true} // defaultOpen is now true by default in the component
+                                    />
+                                </TabsContent>}
+
+                                {/* Orders Tab */}
+                                {accountDetails?.orderHistory && <TabsContent value="orders" className="mt-2">
+                                    <DataTableAccordion
+                                        title="Order History"
+                                        fetchResult={accountDetails.orderHistory}
+                                        isLoading={isFetchingAccountDetails && !accountDetails.orderHistory}
+                                        error={accountDetails.orderHistory?.error}
+                                        // EXAMPLE: Uncomment and list the EXACT header names you want to see
+                                        // visibleColumns={["Date", "Symbol", "Type", "Side", "Quantity", "Price", "Status"]}
+                                    />
+                                </TabsContent>}
+
+                                {/* Accounts & Info Tab */}
                                 {(accountDetails?.tradingAccounts || accountDetails?.accountStatement || accountDetails?.accountInfo) && (
                                     <TabsContent value="accounts" className="mt-2 space-y-4">
-                                        {accountDetails?.tradingAccounts && <DataTableAccordion title="Trading Accounts" fetchResult={accountDetails.tradingAccounts} isLoading={isFetchingAccountDetails && !accountDetails.tradingAccounts} error={accountDetails.tradingAccounts?.error} defaultOpen={true} />}
-                                        {accountDetails?.accountInfo && <DataTableAccordion title="Account Info Summary" fetchResult={accountDetails.accountInfo} isLoading={isFetchingAccountDetails && !accountDetails.accountInfo} error={accountDetails.accountInfo?.error} maxHeight="300px" />}
-                                        {accountDetails?.accountStatement && <DataTableAccordion title="Account Statement" fetchResult={accountDetails.accountStatement} isLoading={isFetchingAccountDetails && !accountDetails.accountStatement} error={accountDetails.accountStatement?.error} />}
+                                        {accountDetails?.tradingAccounts &&
+                                            <DataTableAccordion
+                                                title="Trading Accounts"
+                                                fetchResult={accountDetails.tradingAccounts}
+                                                isLoading={isFetchingAccountDetails && !accountDetails.tradingAccounts}
+                                                error={accountDetails.tradingAccounts?.error}
+                                                // EXAMPLE: Uncomment and list columns
+                                                // visibleColumns={["Account ID", "Currency", "Balance", "Equity"]}
+                                            />}
+                                        {accountDetails?.accountInfo &&
+                                            <DataTableAccordion
+                                                title="Account Info Summary"
+                                                fetchResult={accountDetails.accountInfo}
+                                                isLoading={isFetchingAccountDetails && !accountDetails.accountInfo}
+                                                error={accountDetails.accountInfo?.error}
+                                                maxHeight="300px"
+                                                // EXAMPLE: Uncomment and list columns
+                                                // visibleColumns={["Property", "Value"]}
+                                            />}
+                                        {accountDetails?.accountStatement &&
+                                            <DataTableAccordion
+                                                title="Account Statement"
+                                                fetchResult={accountDetails.accountStatement}
+                                                isLoading={isFetchingAccountDetails && !accountDetails.accountStatement}
+                                                error={accountDetails.accountStatement?.error}
+                                                 // EXAMPLE: Uncomment and list columns
+                                                // visibleColumns={["Date", "Description", "Debit", "Credit", "Balance"]}
+                                            />}
                                     </TabsContent>
                                 )}
                             </Tabs>
                         ) : (
-                             /* Render this if loading finished, no critical errors, but no data */
                              !accountDetailsAuthFailed && !accountDetailsFetchFailed && <div className="text-center py-10 mt-4"><p className="text-neutral-500">No detailed account information available for this connection.</p></div>
                         )
                     )}
                 </CardContent>
             </Card>
 
-            {/* Logs Section */}
-            <Card>
+             {/* Logs Section */}
+             <Card>
                 <CardHeader>
-                    <div className="flex justify-between items-center">
-                        <div><CardTitle className="flex items-center"><ClipboardList className="h-5 w-5 mr-2" /> Logs</CardTitle><CardDescription>View trade, activity, and outstanding logs</CardDescription></div>
-                        <Button
-                            variant={showLogs ? "outline" : "default"}
-                            onClick={handleToggleLogs} // Use the dedicated handler
-                            disabled={isFetchingAccountLogs}
-                        >
-                            {isFetchingAccountLogs ? (
-                                <><RefreshCw className="mr-2 h-4 w-4 animate-spin" />Loading...</>
-                            ) : showLogs ? (
-                                <><RefreshCw className="mr-2 h-4 w-4" />Refresh</> // "Refresh" makes more sense than "Refresh Logs"
-                            ) : (
-                                <><Eye className="mr-2 h-4 w-4" />View Logs</>
-                            )}
-                        </Button>
-                    </div>
-                </CardHeader>
-                {showLogs && ( // Only render content area if showLogs is true
-                    <CardContent>
-                         {/* Loading Skeleton for Logs (Show only on initial load) */}
-                         {isInitialLoadingAccountLogs ? ( <div className="flex flex-col space-y-6 pt-4">{[1, 2, 3].map(i => <div key={`log-skel-${i}`} className="space-y-2"><Skeleton className="h-6 w-1/3" /><Skeleton className="h-32 w-full" /></div>)}</div> )
-                         /* Error Banners for Logs */
-                         : logsAuthFailed ? ( // Highest priority: Authentication error
-                             <Card className="border-red-200 bg-red-50 mt-4">
-                                <CardContent className="pt-6">
-                                    <div className="flex items-center text-red-800">
-                                        <AlertTriangle className="h-5 w-5 mr-2 shrink-0" />
-                                        <p>Authentication failed. Cannot retrieve logs. Please check credentials.</p>
-                                    </div>
-                                </CardContent>
-                             </Card>
-                         ) : logsFetchFailed ? ( // Next priority: General fetch error
-                             <Card className="border-yellow-200 bg-yellow-50 mt-4">
-                                <CardContent className="pt-6">
-                                    <div className="flex items-center text-yellow-800">
-                                        <Info className="h-5 w-5 mr-2 shrink-0" />
-                                        <p>Failed to load logs. {accountLogsError?.message || "Please try refreshing."}</p>
-                                    </div>
-                                </CardContent>
-                             </Card>
-                         ) : logsPartialError ? ( // Lower priority: Partial failure reported by backend
-                             <Card className="border-orange-200 bg-orange-50 mt-4">
-                                <CardContent className="pt-6">
-                                    <div className="flex items-center text-orange-800">
-                                        <Info className="h-5 w-5 mr-2 shrink-0" />
-                                        <p>Could not load all logs. Some sections might show errors below.</p>
-                                    </div>
-                                </CardContent>
-                             </Card>
-                         ) : null /* No banner if loading succeeded without top-level errors */
-                         }
-
-                         {/* Log Tabs (Render if not initial loading AND no critical fetch/auth errors) */}
-                         {!isInitialLoadingAccountLogs && !logsAuthFailed && !logsFetchFailed && (
-                             anyLogDataPresent ? ( // Render tabs only if there's *any* log data (even error rows in subsections)
-                                 <Tabs defaultValue={defaultLogsTabValue} className="w-full mt-4">
-                                     <TabsList className="w-full justify-start border-b pb-0 mb-4 overflow-x-auto">
-                                         {/* Conditionally render triggers based on existence in response */}
-                                         {accountLogs?.tradeLogs && <TabsTrigger value="trade-log"><BookOpen className="h-4 w-4 mr-2" />Trade</TabsTrigger>}
-                                         {accountLogs?.activityLogs && <TabsTrigger value="daily-activity-log"><Activity className="h-4 w-4 mr-2" />Activity</TabsTrigger>}
-                                         {accountLogs?.outstandingLogs && <TabsTrigger value="outstanding-log"><AlertTriangle className="h-4 w-4 mr-2" />Outstanding</TabsTrigger>}
-                                     </TabsList>
-
-                                     {/* Render Tab Content Conditionally - Pass specific fetchResult and error down */}
-                                     {accountLogs?.tradeLogs && (
-                                         <TabsContent value="trade-log" className="mt-2">
-                                             <DataTableAccordion
-                                                 title="Trade Log"
-                                                 fetchResult={accountLogs.tradeLogs}
-                                                 isLoading={isFetchingAccountLogs && !accountLogs.tradeLogs}
-                                                 error={accountLogs.tradeLogs?.error}
-                                                 maxHeight="600px"
-                                                 defaultOpen={defaultLogsTabValue === "trade-log"}
-                                             />
-                                         </TabsContent>
-                                     )}
-                                     {accountLogs?.activityLogs && (
-                                         <TabsContent value="daily-activity-log" className="mt-2">
-                                             <DataTableAccordion
-                                                 title="Daily Activity Log"
-                                                 fetchResult={accountLogs.activityLogs}
-                                                 isLoading={isFetchingAccountLogs && !accountLogs.activityLogs}
-                                                 error={accountLogs.activityLogs?.error}
-                                                 maxHeight="600px"
-                                                 defaultOpen={defaultLogsTabValue === "daily-activity-log"}
-                                             />
-                                         </TabsContent>
-                                     )}
-                                     {accountLogs?.outstandingLogs && (
-                                         <TabsContent value="outstanding-log" className="mt-2">
-                                             <DataTableAccordion
-                                                 title="Outstanding Log"
-                                                 fetchResult={accountLogs.outstandingLogs}
-                                                 isLoading={isFetchingAccountLogs && !accountLogs.outstandingLogs}
-                                                 error={accountLogs.outstandingLogs?.error}
-                                                 maxHeight="600px"
-                                                 defaultOpen={defaultLogsTabValue === "outstanding-log"}
-                                             />
-                                         </TabsContent>
-                                     )}
-                                 </Tabs>
+                     {/* Header remains the same */}
+                     <div className="flex justify-between items-center">
+                         <div><CardTitle className="flex items-center"><ClipboardList className="h-5 w-5 mr-2" /> Logs</CardTitle><CardDescription>View trade, activity, and outstanding logs</CardDescription></div>
+                         <Button
+                             variant={showLogs ? "outline" : "default"}
+                             onClick={handleToggleLogs}
+                             disabled={isFetchingAccountLogs}
+                         >
+                             {isFetchingAccountLogs ? (
+                                 <><RefreshCw className="mr-2 h-4 w-4 animate-spin" />Loading...</>
+                             ) : showLogs ? (
+                                 <><RefreshCw className="mr-2 h-4 w-4" />Refresh</>
                              ) : (
-                                 /* Render this message if loading finished, no critical errors, but NO log data at all */
-                                 <div className="text-center py-10 mt-4">
-                                     <p className="text-neutral-500">No log data available for this connection.</p>
-                                     {/* Optionally show overall log error message if query failed but wasn't caught by banners */}
-                                     {accountLogsError && !logsAuthFailed && !logsFetchFailed && (
-                                        <p className="text-sm text-neutral-400 mt-2">({accountLogsError.message})</p>
-                                     )}
-                                 </div>
-                             )
-                         )}
-                    </CardContent>
-                )}
-            </Card>
+                                 <><Eye className="mr-2 h-4 w-4" />View Logs</>
+                             )}
+                         </Button>
+                     </div>
+                 </CardHeader>
+                 {showLogs && (
+                     <CardContent>
+                          {/* Loading/Error states remain the same */}
+                          {isInitialLoadingAccountLogs ? ( <div className="flex flex-col space-y-6 pt-4">{[1, 2, 3].map(i => <div key={`log-skel-${i}`} className="space-y-2"><Skeleton className="h-6 w-1/3" /><Skeleton className="h-32 w-full" /></div>)}</div> )
+                          : logsAuthFailed ? ( <Card className="border-red-200 bg-red-50 mt-4"><CardContent className="pt-6"><div className="flex items-center text-red-800"><AlertTriangle className="h-5 w-5 mr-2 shrink-0" /><p>Authentication failed. Cannot retrieve logs. Please check credentials.</p></div></CardContent></Card> )
+                          : logsFetchFailed ? ( <Card className="border-yellow-200 bg-yellow-50 mt-4"><CardContent className="pt-6"><div className="flex items-center text-yellow-800"><Info className="h-5 w-5 mr-2 shrink-0" /><p>Failed to load logs. {accountLogsError?.message || "Please try refreshing."}</p></div></CardContent></Card> )
+                          : logsPartialError ? ( <Card className="border-orange-200 bg-orange-50 mt-4"><CardContent className="pt-6"><div className="flex items-center text-orange-800"><Info className="h-5 w-5 mr-2 shrink-0" /><p>Could not load all logs. Some sections might show errors below.</p></div></CardContent></Card> )
+                          : null }
 
-            {/* Edit Credentials Dialog */}
+                          {/* Log Tabs */}
+                          {!isInitialLoadingAccountLogs && !logsAuthFailed && !logsFetchFailed && (
+                              anyLogDataPresent ? (
+                                  <Tabs defaultValue={defaultLogsTabValue} className="w-full mt-4">
+                                      <TabsList className="w-full justify-start border-b pb-0 mb-4 overflow-x-auto">
+                                          {accountLogs?.tradeLogs && <TabsTrigger value="trade-log"><BookOpen className="h-4 w-4 mr-2" />Trade</TabsTrigger>}
+                                          {accountLogs?.activityLogs && <TabsTrigger value="daily-activity-log"><Activity className="h-4 w-4 mr-2" />Activity</TabsTrigger>}
+                                          {accountLogs?.outstandingLogs && <TabsTrigger value="outstanding-log"><AlertTriangle className="h-4 w-4 mr-2" />Outstanding</TabsTrigger>}
+                                      </TabsList>
+
+                                      {/* Trade Log Tab */}
+                                      {accountLogs?.tradeLogs && (
+                                          <TabsContent value="trade-log" className="mt-2">
+                                              <DataTableAccordion
+                                                  title="Trade Log"
+                                                  fetchResult={accountLogs.tradeLogs}
+                                                  isLoading={isFetchingAccountLogs && !accountLogs.tradeLogs}
+                                                  error={accountLogs.tradeLogs?.error}
+                                                  maxHeight="600px"
+                                                  // EXAMPLE: Uncomment and list columns
+                                                  // visibleColumns={["Timestamp", "Symbol", "Side", "Quantity", "Price", "Fee"]}
+                                              />
+                                          </TabsContent>
+                                      )}
+                                      {/* Activity Log Tab */}
+                                      {accountLogs?.activityLogs && (
+                                          <TabsContent value="daily-activity-log" className="mt-2">
+                                              <DataTableAccordion
+                                                  title="Daily Activity Log"
+                                                  fetchResult={accountLogs.activityLogs}
+                                                  isLoading={isFetchingAccountLogs && !accountLogs.activityLogs}
+                                                  error={accountLogs.activityLogs?.error}
+                                                  maxHeight="600px"
+                                                  // EXAMPLE: Uncomment and list columns
+                                                  // visibleColumns={["Date", "Action", "Description", "Amount", "Balance"]}
+                                              />
+                                          </TabsContent>
+                                      )}
+                                      {/* Outstanding Log Tab */}
+                                      {accountLogs?.outstandingLogs && (
+                                          <TabsContent value="outstanding-log" className="mt-2">
+                                              <DataTableAccordion
+                                                  title="Outstanding Log"
+                                                  fetchResult={accountLogs.outstandingLogs}
+                                                  isLoading={isFetchingAccountLogs && !accountLogs.outstandingLogs}
+                                                  error={accountLogs.outstandingLogs?.error}
+                                                  maxHeight="600px"
+                                                  // EXAMPLE: Uncomment and list columns
+                                                  // visibleColumns={["Symbol", "Net Quantity", "Buy Amount", "Sell Amount", "Net Amount"]}
+                                              />
+                                          </TabsContent>
+                                      )}
+                                  </Tabs>
+                              ) : (
+                                  <div className="text-center py-10 mt-4">
+                                      <p className="text-neutral-500">No log data available for this connection.</p>
+                                      {accountLogsError && !logsAuthFailed && !logsFetchFailed && (
+                                         <p className="text-sm text-neutral-400 mt-2">({accountLogsError.message})</p>
+                                      )}
+                                  </div>
+                              )
+                          )}
+                     </CardContent>
+                 )}
+             </Card>
+
+            {/* Edit Credentials Dialog (remains the same) */}
             <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
                  <DialogContent>
                      <DialogHeader><DialogTitle>Edit Credentials</DialogTitle><DialogDescription>Update credentials for {exchange?.name} {broker ? `(${broker.name})` : ""}.</DialogDescription></DialogHeader>
