@@ -97,7 +97,7 @@ export default function ExchangeConnectPage() {
       
       // Short delay to ensure query invalidation completes before redirecting
       setTimeout(() => {
-        setLocation("/");
+        setLocation(`/dashboard/${connection.id}`);
       }, 500);
     },
     onError: (error: Error) => {
