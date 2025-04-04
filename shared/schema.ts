@@ -66,6 +66,25 @@ export const insertConnectionSchema = createInsertSchema(connections);
 export type InsertConnection = z.infer<typeof insertConnectionSchema>;
 export type Connection = typeof connections.$inferSelect;
 
+// Config Schema
+export const configSchema = z.object({
+  features: z.object({
+    futures: z.boolean().default(false),
+    testing: z.boolean().default(false)
+  }),
+  testCredentials: z.object({
+    exchange: z.string().default("PSX"),
+    broker: z.string().default("AKD"),
+    marketType: z.string().default("equity"),
+    username: z.string().default("jawadfoq"),
+    password: z.string().default("Xff89Jpw6"),
+    pin: z.string().default("7175"),
+    accountNumber: z.string().default("COAF3906")
+  })
+});
+
+export type Config = z.infer<typeof configSchema>;
+
 // Login Schema
 export const loginSchema = z.object({
   username: z.string().min(1, "Username is required"),

@@ -4,15 +4,19 @@ import { Link } from "wouter";
 import WelcomeMessage from "@/components/WelcomeMessage";
 import { Button } from "@/components/ui/button";
 import { PlusIcon, ArrowRight, StarIcon } from "lucide-react";
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Connection, Exchange, Broker } from "@shared/schema";
 import { formatDistanceToNow } from "date-fns";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { getConfig } from "@/lib/config";
+import { useQueryClient } from "@tanstack/react-query";
+import { connectionTestSchema, type ConnectionTest } from "@shared/schema";
 
 export default function HomePage() {
+  const queryClient = useQueryClient();
   const { user } = useAuth();
   const { toast } = useToast();
 
@@ -27,7 +31,7 @@ export default function HomePage() {
     refetchOnMount: true,
     refetchOnWindowFocus: true,
   });
-  
+
   // Set default exchange mutation
   const setDefaultMutation = useMutation({
     mutationFn: async (connectionId: number) => {
@@ -52,17 +56,53 @@ export default function HomePage() {
     },
   });
 
+  const quickConnect = async () => {
+    const config = getConfig();
+    if (!config.features.testing) return;
+
+    const testData: ConnectionTest = {
+      exchangeId: 8, // PSX
+      brokerId: 11, // AKD
+      authMethod: "credentials",
+      credentials: {
+        username: config.testCredentials.username,
+        password: config.testCredentials.password,
+        pin: config.testCredentials.pin,
+        accountNumber: config.testCredentials.accountNumber
+      }
+    };
+
+    const response = await fetch("/api/connection/test", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(testData)
+    });
+
+    if (response.ok) {
+      // Create connection
+      const createResponse = await fetch("/api/connection", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(testData)
+      });
+
+      if (createResponse.ok) {
+        queryClient.invalidateQueries({ queryKey: ["connections"] });
+      }
+    }
+  };
+
   if (connectionsLoading || exchangesLoading) {
     return (
       <div className="space-y-6">
         <WelcomeMessage />
-        
+
         <div className="mt-6">
           <div className="flex justify-between items-center mb-4">
             <h2 className="text-xl font-semibold">Your Connections</h2>
             <Skeleton className="h-9 w-40" />
           </div>
-          
+
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             {[1, 2, 3].map((i) => (
               <Card key={i} className="overflow-hidden">
@@ -98,7 +138,7 @@ export default function HomePage() {
   return (
     <div className="space-y-6">
       <WelcomeMessage />
-      
+
       <div className="mt-6">
         <div className="flex justify-between items-center mb-4">
           <h2 className="text-xl font-semibold">Your Connections</h2>
@@ -108,8 +148,11 @@ export default function HomePage() {
               Connect Exchange
             </Button>
           </Link>
+          {getConfig().features.testing && (
+            <Button onClick={quickConnect}>Quick Connect (Test)</Button>
+          )}
         </div>
-        
+
         {connections && connections.length > 0 ? (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             {connections.map((connection) => (
@@ -145,7 +188,7 @@ export default function HomePage() {
                     <div className="flex justify-between">
                       <span className="text-neutral-500">Last Connected:</span>
                       <span className="font-medium">
-                        {connection.lastConnected 
+                        {connection.lastConnected
                           ? formatDistanceToNow(new Date(connection.lastConnected), { addSuffix: true })
                           : "Never"}
                       </span>
@@ -155,8 +198,8 @@ export default function HomePage() {
                 <CardFooter className="flex items-center justify-between border-t pt-4">
                   <div className="flex space-x-2">
                     {!connection.isDefault && (
-                      <Button 
-                        variant="outline" 
+                      <Button
+                        variant="outline"
                         size="sm"
                         className="flex items-center"
                         onClick={() => setDefaultMutation.mutate(connection.id)}
@@ -168,25 +211,25 @@ export default function HomePage() {
                     )}
                   </div>
                   <div className="flex space-x-2">
-                    <Button 
-                      variant="outline" 
+                    <Button
+                      variant="outline"
                       size="sm"
-                      onClick={() => window.confirm("Are you sure you want to disconnect?") && 
-                                    apiRequest("DELETE", `/api/connections/${connection.id}`)
-                                      .then(() => {
-                                        toast({
-                                          title: "Exchange disconnected",
-                                          description: "The exchange has been disconnected successfully"
-                                        });
-                                        queryClient.invalidateQueries({ queryKey: ["/api/connections"] });
-                                      })
-                                      .catch(error => {
-                                        toast({
-                                          title: "Error disconnecting exchange",
-                                          description: error.message,
-                                          variant: "destructive"
-                                        });
-                                      })
+                      onClick={() => window.confirm("Are you sure you want to disconnect?") &&
+                        apiRequest("DELETE", `/api/connections/${connection.id}`)
+                          .then(() => {
+                            toast({
+                              title: "Exchange disconnected",
+                              description: "The exchange has been disconnected successfully"
+                            });
+                            queryClient.invalidateQueries({ queryKey: ["/api/connections"] });
+                          })
+                          .catch(error => {
+                            toast({
+                              title: "Error disconnecting exchange",
+                              description: error.message,
+                              variant: "destructive"
+                            });
+                          })
                       }
                     >
                       Disconnect
